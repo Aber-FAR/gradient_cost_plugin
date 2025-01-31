@@ -67,9 +67,15 @@ namespace gradient_cost_plugin
     declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
     declareParameter("min_obstacle_height", rclcpp::ParameterValue(0.0));
     declareParameter("max_obstacle_height", rclcpp::ParameterValue(2.0));
-    declareParameter("combination_method", rclcpp::ParameterValue(1));
-    declareParameter("observation_sources", rclcpp::ParameterValue(std::string("")));
-    declareParameter("max_gradient", rclcpp::ParameterValue(45.0 / 180.0 * M_PI));
+    // declareParameter("combination_method", rclcpp::ParameterValue(1));
+    declareParameter("observation_sources",
+                     rclcpp::ParameterValue(std::string("")));
+    declareParameter("max_gradient",
+                     rclcpp::ParameterValue(45.0 / 180.0 * M_PI));
+    declareParameter("max_step",
+                     rclcpp::ParameterValue(maxStep_));
+    declareParameter("grid_map_config_file",
+                     rclcpp::ParameterValue(std::string("")));
 
     auto node = node_.lock();
     if (!node)
@@ -81,11 +87,14 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "footprint_clearing_enabled", footprint_clearing_enabled_);
     node->get_parameter(name_ + "." + "min_obstacle_height", min_obstacle_height_);
     node->get_parameter(name_ + "." + "max_obstacle_height", max_obstacle_height_);
-    node->get_parameter(name_ + "." + "combination_method", combination_method_);
+    // node->get_parameter(name_ + "." + "combination_method", combination_method_);
     node->get_parameter("track_unknown_space", track_unknown_space);
     node->get_parameter("transform_tolerance", transform_tolerance);
     node->get_parameter(name_ + "." + "observation_sources", topics_string);
-    node->get_parameter(name_ + "." + "max_gradient", max_gradient_);
+    node->get_parameter(name_ + "." + "max_gradient", maxGradient_);
+    node->get_parameter(name_ + "." + "max_step", maxStep_);
+    node->get_parameter(name_ + "." + "grid_map_config_file",
+                        grid_map_config_file_);
 
     dyn_params_handler_ = node->add_on_set_parameters_callback(
         std::bind(
@@ -304,10 +313,10 @@ namespace gradient_cost_plugin
       }
       else if (param_type == ParameterType::PARAMETER_INTEGER)
       {
-        if (param_name == name_ + "." + "combination_method")
-        {
-          combination_method_ = parameter.as_int();
-        }
+        // if (param_name == name_ + "." + "combination_method")
+        // {
+        //   combination_method_ = parameter.as_int();
+        // }
       }
     }
 
@@ -344,37 +353,28 @@ namespace gradient_cost_plugin
 
     bool current = true;
     std::vector<Observation> observations;
-    // std::vector<Observation> clearing_observations;
 
     // get the marking observations
     current = current && getMarkingObservations(observations);
 
-    // get the clearing observations
-    // current = current && getClearingObservations(clearing_observations);
-
     // update the global current status
     current_ = current;
-
-    // raytrace freespace
-    // for (unsigned int i = 0; i < clearing_observations.size(); ++i)
-    // {
-    //   raytraceFreespace(clearing_observations[i], min_x, min_y, max_x, max_y);
-    // }
 
     pcl::PCLPointCloud2 pclCloud2;
     pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr(
                                 new pcl::PointCloud<pcl::PointXYZ>);
-    // pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-    // pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
-    //                             new pcl::search::KdTree<pcl::PointXYZ> ());
-    // ne.setSearchMethod(tree);
-    // //! \todo The search radius should be an option.
-    // ne.setRadiusSearch(0.03);
-    // pcl::PointCloud<pcl::Normal>::Ptr cloudNormals(
-    //                             new pcl::PointCloud<pcl::Normal>);
 
-    grid_map::GridMapPclLoader gridMapPclLoader(logger_);
-    gridMapPclLoader.loadParameters("/home/ffl/ros2_traethlin/src/gradient_cost_plugin/config/grid_map.yaml");
+    if (rcutils_logging_set_logger_level("gradient_cost_layer",
+                                         RCUTILS_LOG_SEVERITY_ERROR)
+            != RCUTILS_RET_OK)
+    {
+      RCLCPP_DEBUG(logger_,
+        "Could not change logging level of logger 'gradient_cost_layer'");
+    }
+    grid_map::GridMapPclLoader gridMapPclLoader(
+                    rclcpp::get_logger("gradient_cost_layer"));
+    // std::cout << "Config file: " << grid_map_config_file_ << std::endl;
+    gridMapPclLoader.loadParameters(grid_map_config_file_);
 
     // place the new obstacles into a priority queue... each with a priority of
     // zero to begin with
@@ -385,29 +385,16 @@ namespace gradient_cost_plugin
 
       const sensor_msgs::msg::PointCloud2 &cloud = *(obs.cloud_);
 
-      // From:
-      // https://pointclouds.org/documentation/tutorials/normal_estimation.html
-      // - copying the observation (pointcloud) as a PCLPointCloud
-
       pcl_conversions::toPCL(cloud, pclCloud2);
       pcl::fromPCLPointCloud2(pclCloud2,*pclCloudPtr);
 
-      // - calculate the normals
-
       gridMapPclLoader.setInputCloud(pclCloudPtr);
-      // gridMapPclLoader.preProcessInputCloud();
       gridMapPclLoader.initializeGridMapGeometryFromInputCloud();
       gridMapPclLoader.addLayerFromInputCloud("elevation");
       grid_map::GridMap gridMap = gridMapPclLoader.getGridMap();
       gridMap.setFrameId(global_frame_);
 
-      // ne.setInputCloud(pclCloudPtr);
-      // ne.compute(*cloudNormals);
-
-      // - Iterate through the GridMap to calculate steps and gradients
-      //   and populate a cost layer appropriately.
-
-      // We add a layer for the calculated cost.  This is of type double but
+      // We add a layer for the calculated cost.  This is of type float but
       // we will stick to values [0,255] for easy conversion to
       // ROS costmap_2d.
       gridMap.add("cost");
@@ -416,23 +403,19 @@ namespace gradient_cost_plugin
       int neighbourhoodSize = 3;
       int nhs2 = neighbourhoodSize / 2;
 
-      //! \todo maxStep needs to be an option.
-      float maxStep = 0.05;
-
-      double sqObstacleMaxRange = obs.obstacle_max_range_
-                                     * obs.obstacle_max_range_;
-      double sqObstacleMinRange = obs.obstacle_min_range_
-                                     * obs.obstacle_min_range_;
+      // double sqObstacleMaxRange = obs.obstacle_max_range_
+      //                                * obs.obstacle_max_range_;
+      // double sqObstacleMinRange = obs.obstacle_min_range_
+      //                                * obs.obstacle_min_range_;
 
       grid_map::Position startSubmap(nhs2, nhs2);
-      // grid_map::Index startIdx;
-      // gridMap.getIndex(startSubmap, startIdx);
       grid_map::Size submapSize = gridMap.getSize();
       submapSize = submapSize - grid_map::Size(nhs2, nhs2);
 
-      // std::cout << "(" << startSubmap(0) << "," << startSubmap(1) << ")"
-      //           << std::endl;
-      // std::cout << "\t(" << submapSize(0) << "," << submapSize(1) << ")"
+      auto node = node_.lock();
+      // std::cout << node->get_name()
+      //           << " (" << startSubmap(0) << "," << startSubmap(1) << ")"
+      //           << "  (" << submapSize(0) << "," << submapSize(1) << ")"
       //           << std::endl;
 
       // for (grid_map::SubmapIterator mapIter(gridMap, startIdx, submapSize);
@@ -440,53 +423,64 @@ namespace gradient_cost_plugin
       //      !mapIter.isPastEnd();
       //      ++mapIter)
       grid_map::Index mapIdx, subMapIdx;
-      for (int indX = startSubmap(0); indX < submapSize(0); indX++)
+      unsigned int mx, my;
+      grid_map::Position mapPos;
+      unsigned int costmapIdx;
+      int indX, indY;
+      for (indX = startSubmap(0); indX < submapSize(0); indX++)
       {
-        for (int indY = startSubmap(1); indY < submapSize(1); indY++)
+        for (indY = startSubmap(1); indY < submapSize(1); indY++)
         {
           mapIdx(0) = indX;
           mapIdx(1) = indY;
+
+          // Remove locations that do not have data
           float centreElev = gridMap.at("elevation", mapIdx);
-          // std::cout << "Elev " << centreElev << std::endl;
-
-        // gridMap.getPosition(*mapIter, startSubmap);
-      // std::cout << "(" << startSubmap(0) << "," << startSubmap(1) << ")"
-      //           << std::endl;
-        // startSubmap = startSubmap - grid_map::Position(neighbourhoodSize / 2,
-        //                                                neighbourhoodSize / 2);
-        // submapSize(0) = neighbourhoodSize;
-        // submapSize(1) = neighbourhoodSize;
-      
-      // std::cout << "(" << startSubmap(0) << "," << startSubmap(1) << ")"
-      //           << std::endl;
-      // std::cout << "\t(" << submapSize(0) << "," << submapSize(1) << ")"
-      //           << std::endl;
-
-          for (int subIndX = -nhs2; subIndX <= nhs2; subIndX++)
+          if (std::isnan(centreElev))
           {
-            for (int subIndY = -nhs2; subIndY <= nhs2; subIndY++)
+            // No data here, we might as well ignore the point.
+            continue;
+          }
+
+          // Remove locations that are outside of the local map.
+          gridMap.getPosition(mapIdx, mapPos);
+          if (!worldToMap(mapPos(0), mapPos(1), mx, my))
+          {
+            RCLCPP_DEBUG_STREAM(logger_,
+              "Computing map coords failed: (" << mapPos(0) << "," << mapPos(1)
+              << ")");
+            continue;
+          }
+
+          float cost = FREE_SPACE;
+          // float cost = 100;
+          costmapIdx = getIndex(mx, my);
+          costmap_[costmapIdx] = cost;
+          gridMap.at("cost", mapIdx) = cost;
+
+          // std::cout << node->get_name()
+          //           << " costmap pos (" << mx << "," << my << ") size ("
+          //           << getSizeInCellsX() << "," << getSizeInCellsY()
+          //           << ") index " << costmapIdx << "\n";
+
+          // First a loop over the 3x3 neighbourhood to check for steps.
+          for (int subIndX = -1; subIndX <= 1; subIndX++)
+          {
+            for (int subIndY = -1; subIndY <= 1; subIndY++)
             {
               subMapIdx(0) = indX + subIndX;
               subMapIdx(1) = indY + subIndY;
-              grid_map::Position3 pos;
-              gridMap.getPosition3("elevation", subMapIdx, pos);
-              // float elev = gridMap.at("elevation", subMapIdx);
-              if (!std::isnan(pos(2)) && fabs(pos(2) - centreElev) > maxStep)
+              float elev = gridMap.at("elevation", subMapIdx);
+              if (!std::isnan(elev) && (fabs(elev - centreElev) > maxStep_))
               {
                 gridMap.at("cost", mapIdx) = LETHAL_OBSTACLE;
-                unsigned int mx, my;
-                if (!worldToMap(pos(0), pos(1), mx, my))
-                {
-                  RCLCPP_DEBUG(logger_, "Computing map coords failed");
-                  continue;
-                }
-                unsigned int index = getIndex(mx, my);
-                costmap_[index] = LETHAL_OBSTACLE;
-                // costmap_[index] = cost;
-                touch(pos(1), pos(2), min_x, min_y, max_x, max_y);
+                costmap_[costmapIdx] = LETHAL_OBSTACLE;
               }
             }
           }
+
+          if (costmap_[costmapIdx] != default_value_)
+            touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
 
         // for (grid_map::SubmapIterator neighIter(gridMap, 
         //                                         startIdx, submapSize);
@@ -503,11 +497,11 @@ namespace gradient_cost_plugin
         }
       }
 
+      // std::cout << node->get_name() << " gridmap last pos " << indX << " " << indY << std::endl;
+
       auto msg = grid_map::GridMapRosConverter::toMessage(gridMap);
       gridMapPub_->publish(std::move(msg));
       
-
-
 
 
 
@@ -564,7 +558,7 @@ namespace gradient_cost_plugin
       //   // The cost is a char.  Maximum cost is for a maximum allowed
       //   // angle.  Minimum value is for a horizontal
       //   // gradient (angle 0).
-      //   unsigned char cost = fmin(angle, max_gradient_) / max_gradient_ * 255;
+      //   unsigned char cost = fmin(angle, maxGradient_) / maxGradient_ * 255;
 
       //   // if (cost != 0)
       //     // std::cout << nx << " " << ny << " " << nz << " " << angle << " "
@@ -645,15 +639,14 @@ namespace gradient_cost_plugin
 
     for (unsigned int i = 0; i < transformed_footprint_.size(); i++)
     {
-      touch(transformed_footprint_[i].x, transformed_footprint_[i].y, min_x, min_y, max_x, max_y);
+      touch(transformed_footprint_[i].x, transformed_footprint_[i].y,
+            min_x, min_y, max_x, max_y);
     }
   }
 
   void
-  GradientCostLayer::updateCosts(
-      nav2_costmap_2d::Costmap2D &master_grid, int min_i, int min_j,
-      int max_i,
-      int max_j)
+  GradientCostLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid,
+                                 int min_i, int min_j, int max_i, int max_j)
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
     if (!enabled_)
@@ -673,46 +666,36 @@ namespace gradient_cost_plugin
       setConvexPolygonCost(transformed_footprint_, nav2_costmap_2d::FREE_SPACE);
     }
 
-    switch (combination_method_)
-    {
-    case 0: // Overwrite
-      updateWithOverwrite(master_grid, min_i, min_j, max_i, max_j);
-      break;
-    case 1: // Maximum
-      updateWithMax(master_grid, min_i, min_j, max_i, max_j);
-      break;
-    default: // Nothing
-      break;
-    }
+    // We always overwrite.
+    updateWithOverwrite(master_grid, min_i, min_j, max_i, max_j);
   }
 
-  void
-  GradientCostLayer::addStaticObservation(
-      nav2_costmap_2d::Observation &obs,
-      bool marking, bool clearing)
-  {
-    if (marking)
-    {
-      static_marking_observations_.push_back(obs);
-    }
-    if (clearing)
-    {
-      static_clearing_observations_.push_back(obs);
-    }
-  }
+  // void
+  // GradientCostLayer::addStaticObservation(nav2_costmap_2d::Observation &obs,
+  //                                         bool marking, bool clearing)
+  // {
+  //   if (marking)
+  //   {
+  //     static_marking_observations_.push_back(obs);
+  //   }
+  //   if (clearing)
+  //   {
+  //     static_clearing_observations_.push_back(obs);
+  //   }
+  // }
 
-  void
-  GradientCostLayer::clearStaticObservations(bool marking, bool clearing)
-  {
-    if (marking)
-    {
-      static_marking_observations_.clear();
-    }
-    if (clearing)
-    {
-      static_clearing_observations_.clear();
-    }
-  }
+  // void
+  // GradientCostLayer::clearStaticObservations(bool marking, bool clearing)
+  // {
+  //   if (marking)
+  //   {
+  //     static_marking_observations_.clear();
+  //   }
+  //   if (clearing)
+  //   {
+  //     static_clearing_observations_.clear();
+  //   }
+  // }
 
   bool
   GradientCostLayer::getMarkingObservations(std::vector<Observation> &marking_observations) const
@@ -750,12 +733,12 @@ namespace gradient_cost_plugin
     return current;
   }
 
-  void
-  GradientCostLayer::raytraceFreespace(
-      const Observation& /*clearing_observation*/,
-      double* /*min_x*/, double* /*min_y*/,
-      double* /*max_x*/, double* /*max_y*/)
-  {
+  // void
+  // GradientCostLayer::raytraceFreespace(
+  //     const Observation& /*clearing_observation*/,
+  //     double* /*min_x*/, double* /*min_y*/,
+  //     double* /*max_x*/, double* /*max_y*/)
+  // {
     // We do not rayrace anything in this plugin.
 
   //   double ox = clearing_observation.origin_.x;
@@ -846,7 +829,7 @@ namespace gradient_cost_plugin
   //         clearing_observation.raytrace_min_range_, min_x, min_y, max_x,
   //         max_y);
   //   }
-  }
+  // }
 
   void
   GradientCostLayer::activate()
@@ -879,21 +862,22 @@ namespace gradient_cost_plugin
     }
   }
 
-  void
-  GradientCostLayer::updateRaytraceBounds(
-      double ox, double oy, double wx, double wy, double max_range, double min_range,
-      double *min_x, double *min_y, double *max_x, double *max_y)
-  {
-    double dx = wx - ox, dy = wy - oy;
-    double full_distance = hypot(dx, dy);
-    if (full_distance < min_range)
-    {
-      return;
-    }
-    double scale = std::min(1.0, max_range / full_distance);
-    double ex = ox + dx * scale, ey = oy + dy * scale;
-    touch(ex, ey, min_x, min_y, max_x, max_y);
-  }
+  // void
+  // GradientCostLayer::updateRaytraceBounds(
+  //     double /*ox*/, double /*oy*/, double /*wx*/, double /*wy*/,
+  //     double /*max_range*/, double /*min_range*/,
+  //     double* /*min_x*/, double* /*min_y*/, double* /*max_x*/, double* /*max_y*/)
+  // {
+  //   // double dx = wx - ox, dy = wy - oy;
+    // double full_distance = hypot(dx, dy);
+    // if (full_distance < min_range)
+    // {
+    //   return;
+    // }
+    // double scale = std::min(1.0, max_range / full_distance);
+    // double ex = ox + dx * scale, ey = oy + dy * scale;
+    // touch(ex, ey, min_x, min_y, max_x, max_y);
+  // }
 
   void
   GradientCostLayer::reset()

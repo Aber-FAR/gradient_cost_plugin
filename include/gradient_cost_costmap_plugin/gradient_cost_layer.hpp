@@ -147,9 +147,9 @@ public:
     const std::shared_ptr<nav2_costmap_2d::ObservationBuffer>& buffer);
 
   // for testing purposes
-  void addStaticObservation(nav2_costmap_2d::Observation& obs,
-                            bool marking, bool clearing);
-  void clearStaticObservations(bool marking, bool clearing);
+  // void addStaticObservation(nav2_costmap_2d::Observation& obs,
+  //                           bool marking, bool clearing);
+  // void clearStaticObservations(bool marking, bool clearing);
 
 protected:
   /*!
@@ -170,7 +170,7 @@ protected:
   bool getClearingObservations(
     std::vector<nav2_costmap_2d::Observation>& clearing_observations) const;
 
-  /*!
+  /*
    * \brief  Clear freespace based on one observation
    * \param clearing_observation The observation used to raytrace
    * \param min_x
@@ -178,19 +178,19 @@ protected:
    * \param max_x
    * \param max_y
    */
-  virtual void raytraceFreespace(
-    const nav2_costmap_2d::Observation & clearing_observation,
-    double * min_x, double * min_y,
-    double * max_x, double * max_y);
+  // virtual void raytraceFreespace(
+  //   const nav2_costmap_2d::Observation & clearing_observation,
+  //   double * min_x, double * min_y,
+  //   double * max_x, double * max_y);
 
-  /*!
+  /*
    * \brief Process update costmap with raytracing the window bounds
    */
-  void updateRaytraceBounds(
-    double ox, double oy, double wx, double wy,
-    double max_range, double min_range,
-    double * min_x, double * min_y,
-    double * max_x, double * max_y);
+  // void updateRaytraceBounds(
+  //   double ox, double oy, double wx, double wy,
+  //   double max_range, double min_range,
+  //   double * min_x, double * min_y,
+  //   double * max_x, double * max_y);
 
   std::vector<geometry_msgs::msg::Point> transformed_footprint_;
   bool footprint_clearing_enabled_;
@@ -235,12 +235,22 @@ protected:
   /*!
    * \brief Maximum gradient over which the ground is marked as lethal.
    */
-  double max_gradient_;
+  double maxGradient_;
 
   /*!
    * \brief Grid map publisher.
    */
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPub_;
+
+  /*!
+   * \brief Name of the GridMap PCL loader config file.
+   */
+  std::string grid_map_config_file_;
+
+  /*!
+   * \brief Maximum size allowed for a step.
+   */
+  float maxStep_ = 0.05;
 
 };
 
