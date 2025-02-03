@@ -32,7 +32,12 @@
 #include <pcl/visualization/cloud_viewer.h>
 
 #include "grid_map_core/GridMap.hpp"
+#include <grid_map_pcl/GridMapPclLoader.hpp>
+#include <grid_map_pcl/helpers.hpp>
+namespace gm = ::grid_map::grid_map_pcl;
 #include "grid_map_ros/GridMapRosConverter.hpp"
+#include <grid_map_costmap_2d/costmap_2d_converter.hpp>
+
 
 
 #include "rclcpp/rclcpp.hpp"
@@ -232,6 +237,21 @@ protected:
   bool was_reset_;
   int combination_method_;
 
+  /*!
+   * \brief PCL pointcloud2 to convert from the ROS pointcloud2.
+   */
+  // pcl::PCLPointCloud2 pclCloud2_;
+  
+  /*!
+   * \brief PCL pointcloud pointer to convert from the pointcloud2 and manipultae later.
+   */
+  // pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_;
+
+  /*!
+   * \brief GridMap PCL loader.
+  */
+  std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_;
+  
   /*!
    * \brief Maximum gradient over which the ground is marked as lethal.
    */

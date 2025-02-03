@@ -25,12 +25,6 @@
 #include <vector>
 #include <cmath>
 
-#include <grid_map_pcl/GridMapPclLoader.hpp>
-#include <grid_map_pcl/helpers.hpp>
-namespace gm = ::grid_map::grid_map_pcl;
-#include <grid_map_ros/GridMapRosConverter.hpp>
-#include <grid_map_costmap_2d/costmap_2d_converter.hpp>
-
 #include "pluginlib/class_list_macros.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "nav2_costmap_2d/costmap_math.hpp"
@@ -95,6 +89,24 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "max_step", maxStep_);
     node->get_parameter(name_ + "." + "grid_map_config_file",
                         grid_map_config_file_);
+
+    // std::cout << node->get_name()
+    //           << ": max_step: " << maxStep_ << std::endl;
+    // std::cout << node->get_name()
+    //           << ": Config file: " << grid_map_config_file_ << std::endl;
+    std::cout << "--------------------------------------------------------"
+              << std::endl;
+
+    if (rcutils_logging_set_logger_level("gradient_cost_layer",
+                                         RCUTILS_LOG_SEVERITY_ERROR)
+            != RCUTILS_RET_OK)
+    {
+      RCLCPP_DEBUG(logger_,
+        "Could not change logging level of logger 'gradient_cost_layer'");
+    }
+    gridMapPclLoader_ = std::make_shared<grid_map::GridMapPclLoader>(
+                    rclcpp::get_logger("gradient_cost_layer"));
+    gridMapPclLoader_->loadParameters(grid_map_config_file_);
 
     dyn_params_handler_ = node->add_on_set_parameters_callback(
         std::bind(
@@ -340,6 +352,8 @@ namespace gradient_cost_plugin
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());  
 
+    auto node = node_.lock();
+
     if (rolling_window_)
     {
       updateOrigin(robot_x - getSizeInMetersX() / 2,
@@ -360,21 +374,9 @@ namespace gradient_cost_plugin
     // update the global current status
     current_ = current;
 
-    pcl::PCLPointCloud2 pclCloud2;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr(
+    pcl::PCLPointCloud2 pclCloud2_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_(
                                 new pcl::PointCloud<pcl::PointXYZ>);
-
-    if (rcutils_logging_set_logger_level("gradient_cost_layer",
-                                         RCUTILS_LOG_SEVERITY_ERROR)
-            != RCUTILS_RET_OK)
-    {
-      RCLCPP_DEBUG(logger_,
-        "Could not change logging level of logger 'gradient_cost_layer'");
-    }
-    grid_map::GridMapPclLoader gridMapPclLoader(
-                    rclcpp::get_logger("gradient_cost_layer"));
-    // std::cout << "Config file: " << grid_map_config_file_ << std::endl;
-    gridMapPclLoader.loadParameters(grid_map_config_file_);
 
     // place the new obstacles into a priority queue... each with a priority of
     // zero to begin with
@@ -385,13 +387,14 @@ namespace gradient_cost_plugin
 
       const sensor_msgs::msg::PointCloud2 &cloud = *(obs.cloud_);
 
-      pcl_conversions::toPCL(cloud, pclCloud2);
-      pcl::fromPCLPointCloud2(pclCloud2,*pclCloudPtr);
+      pcl_conversions::toPCL(cloud, pclCloud2_);
+      pcl::fromPCLPointCloud2(pclCloud2_,*pclCloudPtr_);
 
-      gridMapPclLoader.setInputCloud(pclCloudPtr);
-      gridMapPclLoader.initializeGridMapGeometryFromInputCloud();
-      gridMapPclLoader.addLayerFromInputCloud("elevation");
-      grid_map::GridMap gridMap = gridMapPclLoader.getGridMap();
+      gridMapPclLoader_->setInputCloud(pclCloudPtr_);
+      // gridMapPclLoader_->preProcessInputCloud();
+      gridMapPclLoader_->initializeGridMapGeometryFromInputCloud();
+      gridMapPclLoader_->addLayerFromInputCloud("elevation");
+      grid_map::GridMap gridMap = gridMapPclLoader_->getGridMap();
       gridMap.setFrameId(global_frame_);
 
       // We add a layer for the calculated cost.  This is of type float but
@@ -412,7 +415,6 @@ namespace gradient_cost_plugin
       grid_map::Size submapSize = gridMap.getSize();
       submapSize = submapSize - grid_map::Size(nhs2, nhs2);
 
-      auto node = node_.lock();
       // std::cout << node->get_name()
       //           << " (" << startSubmap(0) << "," << startSubmap(1) << ")"
       //           << "  (" << submapSize(0) << "," << submapSize(1) << ")"
@@ -463,22 +465,28 @@ namespace gradient_cost_plugin
           //           << getSizeInCellsX() << "," << getSizeInCellsY()
           //           << ") index " << costmapIdx << "\n";
 
-          // First a loop over the 3x3 neighbourhood to check for steps.
-          for (int subIndX = -1; subIndX <= 1; subIndX++)
+          // First a look at the 8 neighbours to check step size.
+          if ((fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY-1))
+                    - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX-0,indY-1))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY-1))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY-0))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY-0))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY+1))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX-0,indY+1))
+                       - centreElev) > maxStep_)
+              || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY+1))
+                       - centreElev) > maxStep_)
+             )
           {
-            for (int subIndY = -1; subIndY <= 1; subIndY++)
-            {
-              subMapIdx(0) = indX + subIndX;
-              subMapIdx(1) = indY + subIndY;
-              float elev = gridMap.at("elevation", subMapIdx);
-              if (!std::isnan(elev) && (fabs(elev - centreElev) > maxStep_))
-              {
-                gridMap.at("cost", mapIdx) = LETHAL_OBSTACLE;
-                costmap_[costmapIdx] = LETHAL_OBSTACLE;
-              }
-            }
+            gridMap.at("cost", mapIdx) = LETHAL_OBSTACLE;
+            costmap_[costmapIdx] = LETHAL_OBSTACLE;
           }
-
           if (costmap_[costmapIdx] != default_value_)
             touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
 
@@ -515,7 +523,7 @@ namespace gradient_cost_plugin
 
       // pcl::PointCloud<pcl::Normal>::iterator normalIter;
       // pcl::PointCloud<pcl::PointXYZ>::iterator cloudIter
-      //     = pclCloudPtr->points.begin();
+      //     = pclCloudPtr_->points.begin();
       // for (normalIter = cloudNormals->points.begin();
       //      normalIter < cloudNormals->points.end();
       //      normalIter++, cloudIter++)

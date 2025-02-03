@@ -1,0 +1,4 @@
+- See if we can limit the grid size to cover the map, especially for the rolling maps.
+- Maybe use the resolution of the map, rather than the one set in the config file.
+- Have two config files for the two maps, at least to specify different resolutions.
+
