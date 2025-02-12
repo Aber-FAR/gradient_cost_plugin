@@ -55,6 +55,9 @@ namespace gm = ::grid_map::grid_map_pcl;
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "nav2_costmap_2d/observation_buffer.hpp"
 #include "nav2_costmap_2d/footprint.hpp"
+#include "tf2_ros/buffer.h"
+
+//#define DO_DEBUG
 
 namespace gradient_cost_plugin
 {
@@ -113,12 +116,12 @@ public:
   /*!
    * \brief Deactivate the layer
    */
-  virtual void deactivate();
+  // virtual void deactivate();
 
   /*!
    * \brief Activate the layer
    */
-  virtual void activate();
+  // virtual void activate();
 
   /*!
    * \brief Reset this costmap
@@ -137,19 +140,17 @@ public:
   rcl_interfaces::msg::SetParametersResult
     dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters);
 
-  /*!
+  /*
    * \brief triggers the update of observations buffer
    */
-  void resetBuffersLastUpdated();
+  // void resetBuffersLastUpdated();
 
   /*!
    * \brief  A callback to handle buffering PointCloud2 messages
-   * \param message The message returned from a message notifier
-   * \param buffer A pointer to the observation buffer to update
+   * \param cloud The cloud (message) returned from a message notifier
    */
   void pointCloud2Callback(
-    sensor_msgs::msg::PointCloud2::ConstSharedPtr message,
-    const std::shared_ptr<nav2_costmap_2d::ObservationBuffer>& buffer);
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
 
   // for testing purposes
   // void addStaticObservation(nav2_costmap_2d::Observation& obs,
@@ -157,45 +158,23 @@ public:
   // void clearStaticObservations(bool marking, bool clearing);
 
 protected:
-  /*!
+  /*
    * \brief  Get the observations used to mark space
    * \param marking_observations A reference to a vector that will be populated
    * with the observations
    * \return True if all the observation buffers are current, false otherwise
    */
-  bool getMarkingObservations(
-    std::vector<nav2_costmap_2d::Observation>& marking_observations) const;
+  // bool getMarkingObservations(
+  //   std::vector<nav2_costmap_2d::Observation>& marking_observations) const;
 
-  /*!
+  /*
    * \brief  Get the observations used to clear space
    * \param clearing_observations A reference to a vector that will be
    * populated with the observations
    * \return True if all the observation buffers are current, false otherwise
    */
-  bool getClearingObservations(
-    std::vector<nav2_costmap_2d::Observation>& clearing_observations) const;
-
-  /*
-   * \brief  Clear freespace based on one observation
-   * \param clearing_observation The observation used to raytrace
-   * \param min_x
-   * \param min_y
-   * \param max_x
-   * \param max_y
-   */
-  // virtual void raytraceFreespace(
-  //   const nav2_costmap_2d::Observation & clearing_observation,
-  //   double * min_x, double * min_y,
-  //   double * max_x, double * max_y);
-
-  /*
-   * \brief Process update costmap with raytracing the window bounds
-   */
-  // void updateRaytraceBounds(
-  //   double ox, double oy, double wx, double wy,
-  //   double max_range, double min_range,
-  //   double * min_x, double * min_y,
-  //   double * max_x, double * max_y);
+  // bool getClearingObservations(
+  //   std::vector<nav2_costmap_2d::Observation>& clearing_observations) const;
 
   std::vector<geometry_msgs::msg::Point> transformed_footprint_;
   bool footprint_clearing_enabled_;
@@ -214,44 +193,89 @@ protected:
 
   /// \brief Used to project laser scans into point clouds
   laser_geometry::LaserProjection projector_;
-  /// \brief Used for the observation message filters
-  std::vector<std::shared_ptr<message_filters::SubscriberBase<rclcpp_lifecycle::LifecycleNode>>>
-  observation_subscribers_;
-  /// \brief Used to make sure that transforms are available for each sensor
-  std::vector<std::shared_ptr<tf2_ros::MessageFilterBase>> observation_notifiers_;
-  /// \brief Used to store observations from various sensors
-  std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> observation_buffers_;
-  /// \brief Used to store observation buffers used for marking obstacles
-  std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> marking_buffers_;
-  /// \brief Used to store observation buffers used for clearing obstacles
-  std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> clearing_buffers_;
+  // \brief Used for the observation message filters
+  // std::vector<std::shared_ptr<message_filters::SubscriberBase<rclcpp_lifecycle::LifecycleNode>>>
+  // observation_subscribers_;
+  // \brief Used to make sure that transforms are available for each sensor
+  // std::vector<std::shared_ptr<tf2_ros::MessageFilterBase>> observation_notifiers_;
+  // \brief Used to store observations from various sensors
+  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> observation_buffers_;
+  // \brief Used to store observation buffers used for marking obstacles
+  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> marking_buffers_;
+  // \brief Used to store observation buffers used for clearing obstacles
+  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> clearing_buffers_;
 
   /// \brief Dynamic parameters handler
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr dyn_params_handler_;
 
   // Used only for testing purposes
-  std::vector<nav2_costmap_2d::Observation> static_clearing_observations_;
-  std::vector<nav2_costmap_2d::Observation> static_marking_observations_;
+  // std::vector<nav2_costmap_2d::Observation> static_clearing_observations_;
+  // std::vector<nav2_costmap_2d::Observation> static_marking_observations_;
 
   bool rolling_window_;
   bool was_reset_;
   int combination_method_;
 
+#ifdef DO_DEBUG
+  /*!
+   * \brief pointcloud2 publisher.
+   */
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr debug_pc2_pub_ = nullptr;
+#endif // DO_DEBUG
+
+  /*!
+   * \brief Pointcloud2 subscriber.
+   */
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr PC2_sub_ = nullptr;
+
+  /*!
+   * \brief Transformed observation cloud, filtered and transformed from the cloud
+   * received in the callback.
+   */
+  sensor_msgs::msg::PointCloud2 global_frame_cloud_;
+
   /*!
    * \brief PCL pointcloud2 to convert from the ROS pointcloud2.
    */
-  // pcl::PCLPointCloud2 pclCloud2_;
+  pcl::PCLPointCloud2 pclCloud2_;
   
   /*!
-   * \brief PCL pointcloud pointer to convert from the pointcloud2 and manipultae later.
+   * \brief PCL pointcloud pointer to convert from the pointcloud2 and manipulate later.
    */
-  // pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_ = nullptr;
+
+  /*!
+   * \brief Buffer for the TFs received.
+   */
+  std::unique_ptr<tf2_ros::Buffer> tf2_buffer_ = nullptr;
+
+  /*!
+   * \brief Transform listener for the pointclouds.
+   */
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_ = nullptr;
+
+  /*!
+   * \brief Time tolerance in the transform, in s.
+   */
+  tf2::Duration tf_tolerance_;
 
   /*!
    * \brief GridMap PCL loader.
-  */
-  std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_;
+   */
+  std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_ = nullptr;
   
+  /*!
+   * \brief Max range for looking at obstacles.
+   * This is used to filter out points from the pointcloud that are too far away.
+   */
+  float obstacleMaxRange_;
+
+  /*!
+   * \brief Min range for looking at obstacles.
+   * This is used to filter out points from the pointcloud that are too close.
+   */
+  float obstacleMinRange_;
+
   /*!
    * \brief Maximum gradient over which the ground is marked as lethal.
    */
@@ -260,7 +284,7 @@ protected:
   /*!
    * \brief Grid map publisher.
    */
-  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPub_;
+  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPub_ = nullptr;
 
   /*!
    * \brief Name of the GridMap PCL loader config file.
@@ -271,6 +295,11 @@ protected:
    * \brief Maximum size allowed for a step.
    */
   float maxStep_ = 0.05;
+
+  /*!
+   * \brief Name of the frame of the sensor.
+   */
+  std::string sensor_frame_;
 
 };
 
