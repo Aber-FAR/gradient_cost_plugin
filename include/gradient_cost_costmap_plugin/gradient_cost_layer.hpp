@@ -31,31 +31,31 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/visualization/cloud_viewer.h>
 
-#include "grid_map_core/GridMap.hpp"
+#include <grid_map_core/GridMap.hpp>
 #include <grid_map_pcl/GridMapPclLoader.hpp>
 #include <grid_map_pcl/helpers.hpp>
 namespace gm = ::grid_map::grid_map_pcl;
-#include "grid_map_ros/GridMapRosConverter.hpp"
+#include <grid_map_ros/GridMapRosConverter.hpp>
 #include <grid_map_costmap_2d/costmap_2d_converter.hpp>
 
 
 
-#include "rclcpp/rclcpp.hpp"
-#include "laser_geometry/laser_geometry.hpp"
+#include <rclcpp/rclcpp.hpp>
+#include <laser_geometry/laser_geometry.hpp>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wreorder"
-#include "tf2_ros/message_filter.h"
+#include <tf2_ros/message_filter.h>
 #pragma GCC diagnostic pop
-#include "message_filters/subscriber.h"
-#include "nav_msgs/msg/occupancy_grid.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
-#include "sensor_msgs/msg/point_cloud.hpp"
-#include "sensor_msgs/msg/point_cloud2.hpp"
-#include "nav2_costmap_2d/costmap_layer.hpp"
-#include "nav2_costmap_2d/layered_costmap.hpp"
-#include "nav2_costmap_2d/observation_buffer.hpp"
-#include "nav2_costmap_2d/footprint.hpp"
-#include "tf2_ros/buffer.h"
+#include <message_filters/subscriber.h>
+#include <nav_msgs/msg/occupancy_grid.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/point_cloud.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <nav2_costmap_2d/costmap_layer.hpp>
+#include <nav2_costmap_2d/layered_costmap.hpp>
+#include <nav2_costmap_2d/observation_buffer.hpp>
+#include <nav2_costmap_2d/footprint.hpp>
+#include <tf2_ros/buffer.h>
 
 //#define DO_DEBUG
 
@@ -214,7 +214,7 @@ protected:
 
   bool rolling_window_;
   bool was_reset_;
-  int combination_method_;
+//   int combination_method_;
 
 #ifdef DO_DEBUG
   /*!
@@ -227,6 +227,23 @@ protected:
    * \brief Pointcloud2 subscriber.
    */
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr PC2_sub_ = nullptr;
+
+  /*!
+   * \brief GridMap where the received pointcloud2 is stored.
+   *
+   * This is done after filtering and frame change.
+   */
+  grid_map::GridMap grid_map_;
+
+  /*!
+   * \brief Max coords of the bounding box of the pointcloud in the gridmap.
+   */
+  grid_map::Index BB_max_;
+
+  /*!
+   * \brief Min coords of the bounding box of the pointcloud in the gridmap.
+   */
+  grid_map::Index BB_min_;
 
   /*!
    * \brief Transformed observation cloud, filtered and transformed from the cloud
@@ -268,13 +285,13 @@ protected:
    * \brief Max range for looking at obstacles.
    * This is used to filter out points from the pointcloud that are too far away.
    */
-  float obstacleMaxRange_;
+  float obstacle_max_range_;
 
   /*!
    * \brief Min range for looking at obstacles.
    * This is used to filter out points from the pointcloud that are too close.
    */
-  float obstacleMinRange_;
+  float obstacle_min_range_;
 
   /*!
    * \brief Maximum gradient over which the ground is marked as lethal.

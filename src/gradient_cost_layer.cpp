@@ -25,17 +25,16 @@
 #include <vector>
 #include <cmath>
 
-#include "pluginlib/class_list_macros.hpp"
-#include "sensor_msgs/point_cloud2_iterator.hpp"
-#include "nav2_costmap_2d/costmap_math.hpp"
-#include "pcl_ros/transforms.hpp"
+#include <pluginlib/class_list_macros.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <nav2_costmap_2d/costmap_math.hpp>
+#include <pcl_ros/transforms.hpp>
 
 using nav2_costmap_2d::FREE_SPACE;
 using nav2_costmap_2d::LETHAL_OBSTACLE;
 using nav2_costmap_2d::NO_INFORMATION;
 
-// using nav2_costmap_2d::Observation;
-// using nav2_costmap_2d::ObservationBuffer;
 using rcl_interfaces::msg::ParameterType;
 
 using std::placeholders::_1;
@@ -197,85 +196,8 @@ namespace gradient_cost_plugin
 
       // get the obstacle range for the sensor
       // double obstacle_max_range, obstacle_min_range;
-    node->get_parameter(name_ + "." + "obstacle_max_range", obstacleMaxRange_);
-    node->get_parameter(name_ + "." + "obstacle_min_range", obstacleMinRange_);
-
-      // get the raytrace ranges for the sensor
-      // double raytrace_max_range, raytrace_min_range; // These are ignored
-      // node->get_parameter(name_ + "." + source + "." + "raytrace_min_range", raytrace_min_range);
-      // node->get_parameter(name_ + "." + source + "." + "raytrace_max_range", raytrace_max_range);
-
-      // RCLCPP_DEBUG(
-      //     logger_,
-      //     "Creating an observation buffer for source %s, topic %s, frame %s",
-      //     source.c_str(), topic.c_str(),
-      //     sensor_frame.c_str());
-
-      // create an observation buffer
-      // observation_buffers_.push_back(
-      //     std::shared_ptr<ObservationBuffer>(
-      //         new ObservationBuffer(
-      //             node, topic, observation_keep_time, expected_update_rate,
-      //             min_obstacle_height, max_obstacle_height,
-      //             obstacleMaxRange_, obstacleMinRange_,
-      //             // raytrace_max_range, raytrace_min_range,
-      //             0.0, 0.0, // Unused raytrace parameters
-      //             *tf_,
-      //             global_frame_,
-      //             sensor_frame,
-      //             tf2::durationFromSec(transform_tolerance))));
-
-      // marking_buffers_.push_back(observation_buffers_.back());
-
-
-      // RCLCPP_DEBUG(
-      //     logger_,
-      //     "Created an observation buffer for source %s, topic %s, "
-      //     "global frame: %s, "
-      //     "expected update rate: %.2f, observation persistence: %.2f",
-      //     source.c_str(), topic.c_str(),
-      //     global_frame_.c_str(), expected_update_rate, observation_keep_time);
-
-      // rmw_qos_profile_t custom_qos_profile = rmw_qos_profile_sensor_data;
-      // custom_qos_profile.depth = 50;
-
-      // create a callback for the topic
-      // \todo
-      // auto sub = std::make_shared<message_filters::Subscriber<
-      //     sensor_msgs::msg::PointCloud2, rclcpp_lifecycle::LifecycleNode>>(node,
-      //                                       topic, custom_qos_profile, sub_opt);
-      // sub->unsubscribe();
-
-      // if (inf_is_valid)
-      // {
-      //   RCLCPP_WARN(
-      //       logger_,
-      //       "obstacle_layer: inf_is_valid option is not applicable to PointCloud observations.");
-      // }
-
-      // auto filter = std::make_shared<tf2_ros::MessageFilter<
-      //                                 sensor_msgs::msg::PointCloud2>>(
-      //     *sub, *tf_, global_frame_, 50,
-      //     node->get_node_logging_interface(),
-      //     node->get_node_clock_interface(),
-      //     tf2::durationFromSec(transform_tolerance));
-
-      // filter->registerCallback(
-      //     std::bind(
-      //         &GradientCostLayer::pointCloud2Callback, this,
-      //         std::placeholders::_1,
-      //         observation_buffers_.back()));
-
-      // observation_subscribers_.push_back(sub);
-      // observation_notifiers_.push_back(filter);
-
-      // if (sensor_frame != "")
-      // {
-      //   std::vector<std::string> target_frames;
-      //   target_frames.push_back(global_frame_);
-      //   target_frames.push_back(sensor_frame);
-      //   observation_notifiers_.back()->setTargetFrames(target_frames);
-      // }
+    node->get_parameter(name_ + "." + "obstacle_max_range", obstacle_max_range_);
+    node->get_parameter(name_ + "." + "obstacle_min_range", obstacle_min_range_);
 
     std::string nodeName(node->get_name());
     gridMapPub_ = node->create_publisher<grid_map_msgs::msg::GridMap>(
@@ -294,7 +216,36 @@ namespace gradient_cost_plugin
     PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
       topic, 10, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
 
+    //
+    // Initialise the grid map.
+    //
+    // We make the gridmap the size of what interests us.  We make it big
+    // enough so that we don't have to resize it all the time, whatever to
+    // orientation of the robot is.  We therefore need a square with side equal
+    // to 2 * obstacle_max_range.  This is wastefull and could lead to going
+    // over cells that are definitely not covered by the pointclouds.  However
+    // resizing the grid at every new pointcloud is expensive.  So as the
+    // gridmap is populated we keep the bounding box of the pointcloud and
+    // only process this.
+
+    // from min and max points we can compute the length
+    grid_map::Length length = grid_map::Length(2 * obstacle_max_range_,
+                                               2 * obstacle_max_range_);
+
+    // we put the center of the grid map where the sensor is.  At the moment we
+    // don't knw so will set it to (0,0) and setPosition() the grid map when we
+    // get pointclouds.
+    grid_map::Position position = grid_map::Position(0.0, 0.0);
+
+    grid_map_.setGeometry(length, resolution_, position);
+    grid_map_.setFrameId(global_frame_);
+    grid_map_.add("elevation");
+    grid_map_.add("cost");
   }
+
+
+
+
 
   rcl_interfaces::msg::SetParametersResult
   GradientCostLayer::dynamicParametersCallback(
@@ -350,6 +301,8 @@ namespace gradient_cost_plugin
   void GradientCostLayer::pointCloud2Callback(
                     sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud)
   {
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
+
     auto node = node_.lock();
 
     // cloud_ = std::make_shared<sensor_msgs::msg::PointCloud2>(*cloud);
@@ -358,62 +311,115 @@ namespace gradient_cost_plugin
     //           << " -------------------------------"
     //           << std::endl;
 
+    //
+    // Initialise the grid map.
+    //
+    grid_map_.clearAll();
+    // And reset the bounding box of the PC in the gridmap.
+    BB_max_(0) = BB_max_(1) = std::numeric_limits<int>::min();
+    BB_min_(0) = BB_min_(1) = std::numeric_limits<int>::max();
+
+    // We set the position of the map to be that of the sensor.
+    std::string origin_frame = (sensor_frame_ == "" ?
+      cloud->header.frame_id : sensor_frame_);
+
+    // Point from the original pointcloud and a point for the gridmap.
+    geometry_msgs::msg::PointStamped pc_point;
+    geometry_msgs::msg::PointStamped gm_point;
+    pc_point.header.stamp = cloud->header.stamp;
+    pc_point.header.frame_id = origin_frame;
+    pc_point.point.x = 0;
+    pc_point.point.y = 0;
+    pc_point.point.z = 0;
+    try
+    {  
+      tf2_buffer_->transform(pc_point, gm_point,
+                             global_frame_, tf_tolerance_);
+    }
+    catch (tf2::TransformException & ex)
+    {
+      // if an exception occurs, we need to remove the empty observation from the list
+      RCLCPP_ERROR(
+        logger_,
+        "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+        origin_frame.c_str(),
+        cloud->header.frame_id.c_str(), ex.what());
+      return;
+    }
+    grid_map_.setPosition(grid_map::Position(gm_point.point.x,
+                                             gm_point.point.y));
 
     // Filter and transform the given PC.
-    // We filter out points too close or too far from the sensor
-    // We transform the PC in the given global frame.
-    // The actual creation of the map is done in updateBounds() because this
-    // is where we know te pose of the robot.
+    // We filter out points too close or too far from the sensor.
+    // The points that are kept are directly put in the gridmap.
 
-    //
-    // Filter first
-    //
-
-    sensor_msgs::msg::PointCloud2 observation_cloud;
-
-    observation_cloud.height = cloud->height;
-    observation_cloud.width = cloud->width;
-    observation_cloud.fields = cloud->fields;
-    observation_cloud.is_bigendian = cloud->is_bigendian;
-    observation_cloud.point_step = cloud->point_step;
-    observation_cloud.row_step = cloud->row_step;
-    // observation_cloud_.is_dense = cloud->is_dense;
-    observation_cloud.is_dense = false; // It won't be after filtering, even if it was.
-    observation_cloud.header.stamp = cloud->header.stamp;
-    observation_cloud.header.frame_id = cloud->header.frame_id;
-
-    unsigned int cloud_size = cloud->height * cloud->width;
-    sensor_msgs::PointCloud2Modifier modifier(observation_cloud);
-    modifier.resize(cloud_size);
-    unsigned int point_count = 0;
-
-    // copy over the points that are within our height bounds
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud, "x");
-    std::vector<unsigned char>::const_iterator iter_cloud = cloud->data.begin();
-    std::vector<unsigned char>::const_iterator iter_cloud_end = cloud->data.end();
-    std::vector<unsigned char>::iterator iter_obs = observation_cloud.data.begin();
-    for (; iter_cloud != iter_cloud_end; ++iter_x, iter_cloud += cloud->point_step)
+    std::vector<unsigned char>::const_iterator iter_cloud
+                                          = cloud->data.begin();
+    std::vector<unsigned char>::const_iterator iter_cloud_end
+                                          = cloud->data.end();
+    for (; iter_cloud != iter_cloud_end;
+         ++iter_x, iter_cloud += cloud->point_step)
     {
       double pointDepth2 = ((iter_x[0]) * (iter_x[0]))
-                            + ((iter_x[1]) * (iter_x[1]))
-                            + ((iter_x[2]) * (iter_x[2]));
-      // std::cout //<< "minDist: " << obstacleMinRange_
-      //                 << " distance: "  << sqrt(pointDepth2)
-      //                 //<< " maxDist: " << obstacleMaxRange_
-      //                 << " "
-      //                 //<< std::endl
-      //                 ;
-      if ((pointDepth2 <= (obstacleMaxRange_ * obstacleMaxRange_))
-          && (pointDepth2 >= (obstacleMinRange_ * obstacleMinRange_)))
+                            + ((iter_x[1]) * (iter_x[1]));
+      if ((pointDepth2 <= (obstacle_max_range_ * obstacle_max_range_))
+          && (pointDepth2 >= (obstacle_min_range_ * obstacle_min_range_)))
       {
-        std::copy(iter_cloud, iter_cloud + cloud->point_step, iter_obs);
-        iter_obs += cloud->point_step;
-        ++point_count;
+        // Make a point from the PC
+        pc_point.point.x = iter_x[0];
+        pc_point.point.y = iter_x[1];
+        pc_point.point.z = iter_x[2];
+
+        // Transform the point to the global frame.
+        try
+        {  
+          tf2_buffer_->transform(pc_point, gm_point, global_frame_, tf_tolerance_);
+        }
+        catch (tf2::TransformException & ex)
+        {
+          // if an exception occurs, we need to remove the empty observation from the list
+          RCLCPP_ERROR(
+            logger_,
+            "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+            origin_frame.c_str(),
+            cloud->header.frame_id.c_str(), ex.what());
+          return;
+        }
+
+        // Add the point to the gridmap.
+        grid_map::Index mapIdx;
+        bool res = grid_map_.getIndex(grid_map::Position(gm_point.point.x,
+                                                         gm_point.point.y),
+                                      mapIdx);
+        if (res)
+        {
+          // If a value already exist at this location, we keep the highest.
+          double current_elev = grid_map_.at("elevation", mapIdx);
+          grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
+                                                       current_elev);
+
+          // And update the bounding box
+          BB_max_(0) = std::max(BB_max_(0), mapIdx(0));
+          BB_max_(1) = std::max(BB_max_(1), mapIdx(1));
+          BB_min_(0) = std::min(BB_min_(0), mapIdx(0));
+          BB_min_(1) = std::min(BB_min_(1), mapIdx(1));
+
+          current_ = false;
+        }
+        // std::copy(iter_cloud, iter_cloud + cloud->point_step, iter_obs);
+        // iter_obs += cloud->point_step;
+        // ++point_count;
       }
     }
+//     if (strcmp(node->get_name(), "local_costmap") == 0)
+//       std::cout << node->get_name() << ": BB from PC: ("
+//                 << BB_min_(0) << "," << BB_min_(1) << "),("
+//                 << BB_max_(0) << "," << BB_max_(1) << ")"
+//                 << std::endl;
 
     // resize the cloud for the number of legal points
-    modifier.resize(point_count);
+    // modifier.resize(point_count);
 
     // std::cout << "ROS Cloud2 size after filtering: " << observation_cloud_.data.size()
     //     << " -------------------------------"
@@ -427,29 +433,27 @@ namespace gradient_cost_plugin
 
     // check whether the origin frame has been set explicitly
     // or whether we should get it from the cloud
-    std::string origin_frame = (sensor_frame_ == "" ?
-      cloud->header.frame_id : sensor_frame_);
 
-    try
-    {  
-      // transform the point cloud
-      tf2_buffer_->transform(observation_cloud, global_frame_cloud_,
-                             global_frame_, tf_tolerance_);
-      global_frame_cloud_.header.stamp = cloud->header.stamp;
-    }
-    catch (tf2::TransformException & ex)
-    {
-      // if an exception occurs, we need to remove the empty observation from the list
-      RCLCPP_ERROR(
-        logger_,
-        "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
-        sensor_frame_.c_str(),
-        cloud->header.frame_id.c_str(), ex.what());
-      return;
-    }
+    // try
+    // {  
+    //   // transform the point cloud
+    //   tf2_buffer_->transform(observation_cloud, global_frame_cloud_,
+    //                          global_frame_, tf_tolerance_);
+    //   global_frame_cloud_.header.stamp = cloud->header.stamp;
+    // }
+    // catch (tf2::TransformException & ex)
+    // {
+    //   // if an exception occurs, we need to remove the empty observation from the list
+    //   RCLCPP_ERROR(
+    //     logger_,
+    //     "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+    //     sensor_frame_.c_str(),
+    //     cloud->header.frame_id.c_str(), ex.what());
+    //   return;
+    // }
 
     // Finally we say that the crated map is not current any more.
-    current_ = false;
+//     current_ = false;
 
 #ifdef DO_DEBUG
     debug_pc2_pub_->publish(global_frame_cloud);
@@ -457,19 +461,26 @@ namespace gradient_cost_plugin
 
   }
 
+
+
+
+
+
+
+
   void GradientCostLayer::updateBounds(
                     double robot_x, double robot_y, double robot_yaw,
                     double *min_x, double *min_y, double *max_x, double *max_y)
   {
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());  
+
+    auto node = node_.lock();
+
     if (current_)
     {
       // There is nothing to do so we return.
       return;
     }
-
-    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());  
-
-    auto node = node_.lock();
 
     if (rolling_window_)
     {
@@ -492,44 +503,53 @@ namespace gradient_cost_plugin
     // receiving the pointcloud?  It all depends on how often each of the functions
     // is called.
 
-    pcl_conversions::toPCL(global_frame_cloud_, pclCloud2_);
-    pcl::fromPCLPointCloud2(pclCloud2_, *pclCloudPtr_);
-
-    // Convert to a GridMap.
-    gridMapPclLoader_->setInputCloud(pclCloudPtr_);
-    // gridMapPclLoader_->preProcessInputCloud();
-    gridMapPclLoader_->initializeGridMapGeometryFromInputCloud();
-    gridMapPclLoader_->addLayerFromInputCloud("elevation");
-    grid_map::GridMap gridMap = gridMapPclLoader_->getGridMap();
-    gridMap.setFrameId(global_frame_);
-
-    // We add a layer for the calculated cost.  This is of type float but
-    // we will stick to values [0,255] for easy conversion to
-    // ROS costmap_2d.
-    gridMap.add("cost");
+//     pcl_conversions::toPCL(global_frame_cloud_, pclCloud2_);
+//     pcl::fromPCLPointCloud2(pclCloud2_, *pclCloudPtr_);
+//
+//     // Convert to a GridMap.
+//     gridMapPclLoader_->setInputCloud(pclCloudPtr_);
+//     // gridMapPclLoader_->preProcessInputCloud();
+//     gridMapPclLoader_->initializeGridMapGeometryFromInputCloud();
+//     gridMapPclLoader_->addLayerFromInputCloud("elevation");
+//     grid_map_ = gridMapPclLoader_->getGridMap();
+//     grid_map_.setFrameId(global_frame_);
+//
+//     // We add a layer for the calculated cost.  This is of type float but
+//     // we will stick to values [0,255] for easy conversion to
+//     // ROS costmap_2d.
+//     grid_map_.add("cost");
 
     //! \todo neighbourhoodSize needs to be an option.
-    int neighbourhoodSize = 3;
-    int nhs2 = neighbourhoodSize / 2;
+//     int neighbourhoodSize = 3;
+//     int nhs2 = neighbourhoodSize / 2;
 
-    grid_map::Position startSubmap(nhs2, nhs2);
-    grid_map::Size submapSize = gridMap.getSize();
-    submapSize = submapSize - grid_map::Size(nhs2, nhs2);
+//     grid_map::Position startSubmap(nhs2, nhs2);
+//     grid_map::Size submapSize = grid_map_.getSize();
+//     submapSize = submapSize - grid_map::Size(nhs2, nhs2);
 
     grid_map::Index mapIdx, subMapIdx;
     unsigned int mx, my;
     grid_map::Position mapPos;
     unsigned int costmapIdx;
     int indX, indY;
-    for (indX = startSubmap(0); indX < submapSize(0); indX++)
+//     for (indX = startSubmap(0); indX < submapSize(0); indX++)
+//     {
+//       for (indY = startSubmap(1); indY < submapSize(1); indY++)
+//       {
+//     if (strcmp(node->get_name(), "local_costmap") == 0)
+//       std::cout << node->get_name() << ": BB in GM:   ("
+//                 << BB_min_(0) << "," << BB_min_(1) << "),("
+//                 << BB_max_(0) << "," << BB_max_(1) << ")"
+//                 << std::endl;
+    for (indX = BB_min_(0) + 1; indX <= BB_max_(0) - 1; indX++)
     {
-      for (indY = startSubmap(1); indY < submapSize(1); indY++)
+      for (indY = BB_min_(1) + 1; indY <= BB_max_(1) - 1; indY++)
       {
         mapIdx(0) = indX;
         mapIdx(1) = indY;
 
         // Remove locations that do not have data
-        float centreElev = gridMap.at("elevation", mapIdx);
+        float centreElev = grid_map_.at("elevation", mapIdx);
         if (std::isnan(centreElev))
         {
           // No data here, we might as well ignore the point.
@@ -537,7 +557,7 @@ namespace gradient_cost_plugin
         }
 
         // Remove locations that are outside of the local map.
-        gridMap.getPosition(mapIdx, mapPos);
+        grid_map_.getPosition(mapIdx, mapPos);
         bool point_ok = worldToMap(mapPos(0), mapPos(1), mx, my);
         if (!point_ok)
         {
@@ -551,42 +571,42 @@ namespace gradient_cost_plugin
         // float cost = 100;
         costmapIdx = getIndex(mx, my);
         costmap_[costmapIdx] = cost;
-        gridMap.at("cost", mapIdx) = cost;
+        grid_map_.at("cost", mapIdx) = cost;
 
         // std::cout << node->get_name()
         //           << " costmap pos (" << mx << "," << my << ") size ("
         //           << getSizeInCellsX() << "," << getSizeInCellsY()
         //           << ") index " << costmapIdx << "\n";
+          touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
 
         // First a look at the 8 neighbours to check step size.
-        if ((fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY-1))
+        if ((fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-1))
                   - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX-0,indY-1))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-0,indY-1))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY-1))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY-1))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY-0))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-0))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY-0))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY-0))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX-1,indY+1))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY+1))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX-0,indY+1))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-0,indY+1))
                       - centreElev) > maxStep_)
-            || (fabs(gridMap.at("elevation", grid_map::Index(indX+1,indY+1))
+            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY+1))
                       - centreElev) > maxStep_))
         {
-          gridMap.at("cost", mapIdx) = LETHAL_OBSTACLE;
+          grid_map_.at("cost", mapIdx) = LETHAL_OBSTACLE;
           costmap_[costmapIdx] = LETHAL_OBSTACLE;
-          touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
           continue;
         }
       }
     }
 
-    // std::cout << node->get_name() << " gridmap last pos " << indX << " " << indY << std::endl;
+    // std::cout << node->get_name() << " grid_map_ last pos " << indX << " " << indY << std::endl;
 
-    auto msg = grid_map::GridMapRosConverter::toMessage(gridMap);
+    auto msg = grid_map::GridMapRosConverter::toMessage(grid_map_);
     gridMapPub_->publish(std::move(msg));
       
 
