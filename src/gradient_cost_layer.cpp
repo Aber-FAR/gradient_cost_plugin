@@ -29,7 +29,7 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <nav2_costmap_2d/costmap_math.hpp>
-#include <pcl_ros/transforms.hpp>
+// #include <pcl_ros/transforms.hpp>
 
 using nav2_costmap_2d::FREE_SPACE;
 using nav2_costmap_2d::LETHAL_OBSTACLE;
@@ -45,10 +45,8 @@ namespace gradient_cost_plugin
   GradientCostLayer::~GradientCostLayer()
   {
     dyn_params_handler_.reset();
-    // for (auto &notifier : observation_notifiers_)
-    // {
-    //   notifier.reset();
-    // }
+
+  grid_map::GridMap grid_map_;
   }
 
   void GradientCostLayer::onInitialize()
@@ -90,8 +88,8 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "observation_sources", topics_string);
     node->get_parameter(name_ + "." + "max_gradient", maxGradient_);
     node->get_parameter(name_ + "." + "max_step", maxStep_);
-    node->get_parameter(name_ + "." + "grid_map_config_file",
-                        grid_map_config_file_);
+//     node->get_parameter(name_ + "." + "grid_map_config_file",
+//                         grid_map_config_file_);
 
     // std::cout << node->get_name()
     //           << ": max_step: " << maxStep_ << std::endl;
@@ -107,11 +105,11 @@ namespace gradient_cost_plugin
       RCLCPP_DEBUG(logger_,
         "Could not change logging level of logger 'gradient_cost_layer'");
     }
-    gridMapPclLoader_ = std::make_shared<grid_map::GridMapPclLoader>(
-                    rclcpp::get_logger("gradient_cost_layer"));
-    gridMapPclLoader_->loadParameters(grid_map_config_file_);
-
-    pclCloudPtr_ = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+//     gridMapPclLoader_ = std::make_shared<grid_map::GridMapPclLoader>(
+//                     rclcpp::get_logger("gradient_cost_layer"));
+//     gridMapPclLoader_->loadParameters(grid_map_config_file_);
+//
+//     pclCloudPtr_ = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
 
     dyn_params_handler_ = node->add_on_set_parameters_callback(
         std::bind(
@@ -220,20 +218,19 @@ namespace gradient_cost_plugin
     // Initialise the grid map.
     //
     // We make the gridmap the size of what interests us.  We make it big
-    // enough so that we don't have to resize it all the time, whatever to
+    // enough so that we don't have to resize it all the time, whatever the
     // orientation of the robot is.  We therefore need a square with side equal
-    // to 2 * obstacle_max_range.  This is wastefull and could lead to going
-    // over cells that are definitely not covered by the pointclouds.  However
-    // resizing the grid at every new pointcloud is expensive.  So as the
-    // gridmap is populated we keep the bounding box of the pointcloud and
+    // to 2 * obstacle_max_range.  This is wastefull in memory and clearing time,
+    // and could lead to going over cells that are definitely not covered by the
+    // pointclouds.  However resizing the grid (or creating a new grid) at every
+    // new pointcloud is expensive.  So as the gridmap is populated we keep the
+    // bounding box of the pointcloud (as index in the grid map) and
     // only process this.
-
-    // from min and max points we can compute the length
     grid_map::Length length = grid_map::Length(2 * obstacle_max_range_,
                                                2 * obstacle_max_range_);
 
     // we put the center of the grid map where the sensor is.  At the moment we
-    // don't knw so will set it to (0,0) and setPosition() the grid map when we
+    // don't know so will set it to (0,0) and setPosition() the grid map when we
     // get pointclouds.
     grid_map::Position position = grid_map::Position(0.0, 0.0);
 
@@ -298,6 +295,12 @@ namespace gradient_cost_plugin
     return result;
   }
 
+
+
+
+
+
+
   void GradientCostLayer::pointCloud2Callback(
                     sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud)
   {
@@ -305,35 +308,17 @@ namespace gradient_cost_plugin
 
     auto node = node_.lock();
 
-    // cloud_ = std::make_shared<sensor_msgs::msg::PointCloud2>(*cloud);
-
-    // std::cout << "ROS Cloud2 size before filtering: " << cloud->data.size()
-    //           << " -------------------------------"
-    //           << std::endl;
-
     //
-    // Initialise the grid map.
-    //
-    grid_map_.clearAll();
-    // And reset the bounding box of the PC in the gridmap.
-    BB_max_(0) = BB_max_(1) = std::numeric_limits<int>::min();
-    BB_min_(0) = BB_min_(1) = std::numeric_limits<int>::max();
-
-    // We set the position of the map to be that of the sensor.
+    // We transform the pointcloud to the global frame.  This makes a copy of
+    // the pointcloud.
     std::string origin_frame = (sensor_frame_ == "" ?
       cloud->header.frame_id : sensor_frame_);
 
-    // Point from the original pointcloud and a point for the gridmap.
-    geometry_msgs::msg::PointStamped pc_point;
-    geometry_msgs::msg::PointStamped gm_point;
-    pc_point.header.stamp = cloud->header.stamp;
-    pc_point.header.frame_id = origin_frame;
-    pc_point.point.x = 0;
-    pc_point.point.y = 0;
-    pc_point.point.z = 0;
+    cloud_transf_.header.stamp = cloud->header.stamp;
+    cloud_transf_.header.frame_id = origin_frame;
     try
-    {  
-      tf2_buffer_->transform(pc_point, gm_point,
+    {
+      tf2_buffer_->transform(*cloud, cloud_transf_,
                              global_frame_, tf_tolerance_);
     }
     catch (tf2::TransformException & ex)
@@ -346,119 +331,36 @@ namespace gradient_cost_plugin
         cloud->header.frame_id.c_str(), ex.what());
       return;
     }
-    grid_map_.setPosition(grid_map::Position(gm_point.point.x,
-                                             gm_point.point.y));
 
-    // Filter and transform the given PC.
-    // We filter out points too close or too far from the sensor.
-    // The points that are kept are directly put in the gridmap.
-
-    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud, "x");
-    std::vector<unsigned char>::const_iterator iter_cloud
-                                          = cloud->data.begin();
-    std::vector<unsigned char>::const_iterator iter_cloud_end
-                                          = cloud->data.end();
-    for (; iter_cloud != iter_cloud_end;
-         ++iter_x, iter_cloud += cloud->point_step)
+    // We save the origin of the sensor, in the global frame.
+    geometry_msgs::msg::PointStamped orig_point;
+    orig_point.header.stamp = cloud->header.stamp;
+    orig_point.header.frame_id = cloud->header.frame_id;
+    orig_point.point.x = 0;
+    orig_point.point.y = 0;
+    orig_point.point.z = 0;
+    try
     {
-      double pointDepth2 = ((iter_x[0]) * (iter_x[0]))
-                            + ((iter_x[1]) * (iter_x[1]));
-      if ((pointDepth2 <= (obstacle_max_range_ * obstacle_max_range_))
-          && (pointDepth2 >= (obstacle_min_range_ * obstacle_min_range_)))
-      {
-        // Make a point from the PC
-        pc_point.point.x = iter_x[0];
-        pc_point.point.y = iter_x[1];
-        pc_point.point.z = iter_x[2];
-
-        // Transform the point to the global frame.
-        try
-        {  
-          tf2_buffer_->transform(pc_point, gm_point, global_frame_, tf_tolerance_);
-        }
-        catch (tf2::TransformException & ex)
-        {
-          // if an exception occurs, we need to remove the empty observation from the list
-          RCLCPP_ERROR(
-            logger_,
-            "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
-            origin_frame.c_str(),
-            cloud->header.frame_id.c_str(), ex.what());
-          return;
-        }
-
-        // Add the point to the gridmap.
-        grid_map::Index mapIdx;
-        bool res = grid_map_.getIndex(grid_map::Position(gm_point.point.x,
-                                                         gm_point.point.y),
-                                      mapIdx);
-        if (res)
-        {
-          // If a value already exist at this location, we keep the highest.
-          double current_elev = grid_map_.at("elevation", mapIdx);
-          grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
-                                                       current_elev);
-
-          // And update the bounding box
-          BB_max_(0) = std::max(BB_max_(0), mapIdx(0));
-          BB_max_(1) = std::max(BB_max_(1), mapIdx(1));
-          BB_min_(0) = std::min(BB_min_(0), mapIdx(0));
-          BB_min_(1) = std::min(BB_min_(1), mapIdx(1));
-
-          current_ = false;
-        }
-        // std::copy(iter_cloud, iter_cloud + cloud->point_step, iter_obs);
-        // iter_obs += cloud->point_step;
-        // ++point_count;
-      }
+      tf2_buffer_->transform(orig_point, orig_transf_point_,
+                             global_frame_, tf_tolerance_);
     }
-//     if (strcmp(node->get_name(), "local_costmap") == 0)
-//       std::cout << node->get_name() << ": BB from PC: ("
-//                 << BB_min_(0) << "," << BB_min_(1) << "),("
-//                 << BB_max_(0) << "," << BB_max_(1) << ")"
-//                 << std::endl;
+    catch (tf2::TransformException & ex)
+    {
+      // if an exception occurs, we need to remove the empty observation from the list
+      RCLCPP_ERROR(
+        logger_,
+        "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+        cloud->header.frame_id.c_str(),
+        cloud->header.frame_id.c_str(), ex.what());
+      return;
+    }
 
-    // resize the cloud for the number of legal points
-    // modifier.resize(point_count);
-
-    // std::cout << "ROS Cloud2 size after filtering: " << observation_cloud_.data.size()
-    //     << " -------------------------------"
-    //     << std::endl;
-
-    //
-    // Transform
-    //
-    //! \todo See if we can transform point by point at the same time as the filtering.
-    //
-
-    // check whether the origin frame has been set explicitly
-    // or whether we should get it from the cloud
-
-    // try
-    // {  
-    //   // transform the point cloud
-    //   tf2_buffer_->transform(observation_cloud, global_frame_cloud_,
-    //                          global_frame_, tf_tolerance_);
-    //   global_frame_cloud_.header.stamp = cloud->header.stamp;
-    // }
-    // catch (tf2::TransformException & ex)
-    // {
-    //   // if an exception occurs, we need to remove the empty observation from the list
-    //   RCLCPP_ERROR(
-    //     logger_,
-    //     "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
-    //     sensor_frame_.c_str(),
-    //     cloud->header.frame_id.c_str(), ex.what());
-    //   return;
-    // }
-
-    // Finally we say that the crated map is not current any more.
-//     current_ = false;
+    // We have new data to process so we are not current any more.
+    current_ = false;
 
 #ifdef DO_DEBUG
-    debug_pc2_pub_->publish(global_frame_cloud);
+    debug_pc2_pub_->publish(cloudTransf_);
 #endif // DO_DEBUG
-
   }
 
 
@@ -496,51 +398,122 @@ namespace gradient_cost_plugin
     // update the global current status
     current_ = true;
 
+#ifdef DO_BENCHMARK
+    rclcpp::Time GMTime = node->get_clock()->now();
+    {
+      grid_map::GridMap aGridMap;
+      sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_transf_, "x");
+      std::vector<unsigned char>::const_iterator iter_cloud
+                                          = cloud_transf_.data.begin();
+      std::vector<unsigned char>::const_iterator iter_cloud_end
+                                          = cloud_transf_.data.end();
+      float BBxmax, BBxmin, BBymax, BBymin;
+      BBxmax = BBymax = std::numeric_limits<float>::min();
+      BBxmin = BBymin = std::numeric_limits<float>::max();
+      for (; iter_cloud != iter_cloud_end;
+           ++iter_x, iter_cloud += cloud_transf_.point_step)
+      {
+        BBxmax = std::max(BBxmax, iter_x[0]);
+        BBymax = std::max(BBymax, iter_x[1]);
+        BBxmin = std::min(BBxmin, iter_x[0]);
+        BBymin = std::min(BBymin, iter_x[1]);
+      }
+
+      grid_map::Length length = grid_map::Length(BBxmax - BBxmin,
+                                                 BBymax - BBymin);
+      grid_map::Position position = grid_map::Position((BBxmax + BBxmin) / 2.0,
+                                                       (BBymax + BBymin) / 2.0);
+      aGridMap.setGeometry(length, resolution_, position);
+    }
+    rclcpp::Duration elapsed = (node->get_clock()->now() - GMTime);
+    std::cout << node->get_name() << ": new GM creation: "
+      << elapsed.seconds() << "s (" << 1.0/elapsed.seconds() << "fps)"
+      << std::endl;
+#endif // DO_BENCHMARK
+
     //
-    // Conversion to PCL PointCloud.
+    // Initialise the grid map.
     //
-    //! \todo Is it more efficient to do the conversion to GridMap here or when
-    // receiving the pointcloud?  It all depends on how often each of the functions
-    // is called.
+#ifdef DO_BENCHMARK
+    rclcpp::Time time1 = node->get_clock()->now();
+#endif // DO_BENCHMARK
+    grid_map_.clearAll();
 
-//     pcl_conversions::toPCL(global_frame_cloud_, pclCloud2_);
-//     pcl::fromPCLPointCloud2(pclCloud2_, *pclCloudPtr_);
-//
-//     // Convert to a GridMap.
-//     gridMapPclLoader_->setInputCloud(pclCloudPtr_);
-//     // gridMapPclLoader_->preProcessInputCloud();
-//     gridMapPclLoader_->initializeGridMapGeometryFromInputCloud();
-//     gridMapPclLoader_->addLayerFromInputCloud("elevation");
-//     grid_map_ = gridMapPclLoader_->getGridMap();
-//     grid_map_.setFrameId(global_frame_);
-//
-//     // We add a layer for the calculated cost.  This is of type float but
-//     // we will stick to values [0,255] for easy conversion to
-//     // ROS costmap_2d.
-//     grid_map_.add("cost");
+    // And reset the bounding box of the PC in the gridmap.
+    BB_max_(0) = BB_max_(1) = std::numeric_limits<int>::min();
+    BB_min_(0) = BB_min_(1) = std::numeric_limits<int>::max();
 
-    //! \todo neighbourhoodSize needs to be an option.
-//     int neighbourhoodSize = 3;
-//     int nhs2 = neighbourhoodSize / 2;
+    // Point from the original pointcloud and a point for the gridmap.
+    geometry_msgs::msg::PointStamped pc_point;
+    geometry_msgs::msg::PointStamped gm_point;
+    pc_point.header.stamp = cloud_transf_.header.stamp;
+    pc_point.header.frame_id = cloud_transf_.header.frame_id;
 
-//     grid_map::Position startSubmap(nhs2, nhs2);
-//     grid_map::Size submapSize = grid_map_.getSize();
-//     submapSize = submapSize - grid_map::Size(nhs2, nhs2);
+    grid_map_.setPosition(grid_map::Position(orig_transf_point_.point.x,
+                                             orig_transf_point_.point.y));
+#ifdef DO_BENCHMARK
+    elapsed = node->get_clock()->now() - time1;
+    std::cout << node->get_name() << ": Global gridmap reset(): "
+      << elapsed.seconds() << "s (" << 1.0/elapsed.seconds() << "fps)"
+      << std::endl;
+#endif // DO_BENCHMARK
 
+    // Filter the transformed PC.
+    // We filter out points too close or too far from the sensor.
+    // The points that are kept are directly put in the gridmap.
+
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_transf_, "x");
+    std::vector<unsigned char>::const_iterator iter_cloud
+                                          = cloud_transf_.data.begin();
+    std::vector<unsigned char>::const_iterator iter_cloud_end
+                                          = cloud_transf_.data.end();
+    for (; iter_cloud != iter_cloud_end;
+         ++iter_x, iter_cloud += cloud_transf_.point_step)
+    {
+      double pointDepth2 = ((iter_x[0] - orig_transf_point_.point.x)
+                            * (iter_x[0] - orig_transf_point_.point.x))
+                           + ((iter_x[1] - orig_transf_point_.point.y)
+                            * (iter_x[1] - orig_transf_point_.point.y))
+                           + ((iter_x[2] - orig_transf_point_.point.z)
+                            * (iter_x[2] - orig_transf_point_.point.z));
+
+      if ((pointDepth2 <= (obstacle_max_range_ * obstacle_max_range_))
+          && (pointDepth2 >= (obstacle_min_range_ * obstacle_min_range_)))
+      {
+        // Make a point from the PC
+        gm_point.point.x = iter_x[0];
+        gm_point.point.y = iter_x[1];
+        gm_point.point.z = iter_x[2];
+
+        // Add the point to the gridmap.
+        grid_map::Index mapIdx;
+        bool res = grid_map_.getIndex(grid_map::Position(gm_point.point.x,
+                                                         gm_point.point.y),
+                                      mapIdx);
+        if (res)
+        {
+          // If a value already exist at this location, we keep the highest.
+          double current_elev = grid_map_.at("elevation", mapIdx);
+          grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
+                                                       current_elev);
+
+          // And update the bounding box
+          BB_max_(0) = std::max(BB_max_(0), mapIdx(0));
+          BB_max_(1) = std::max(BB_max_(1), mapIdx(1));
+          BB_min_(0) = std::min(BB_min_(0), mapIdx(0));
+          BB_min_(1) = std::min(BB_min_(1), mapIdx(1));
+        }
+      }
+    }
+
+    //
+    // Create the costs in the gridmap and the costmap.
+    //
     grid_map::Index mapIdx, subMapIdx;
     unsigned int mx, my;
     grid_map::Position mapPos;
     unsigned int costmapIdx;
     int indX, indY;
-//     for (indX = startSubmap(0); indX < submapSize(0); indX++)
-//     {
-//       for (indY = startSubmap(1); indY < submapSize(1); indY++)
-//       {
-//     if (strcmp(node->get_name(), "local_costmap") == 0)
-//       std::cout << node->get_name() << ": BB in GM:   ("
-//                 << BB_min_(0) << "," << BB_min_(1) << "),("
-//                 << BB_max_(0) << "," << BB_max_(1) << ")"
-//                 << std::endl;
     for (indX = BB_min_(0) + 1; indX <= BB_max_(0) - 1; indX++)
     {
       for (indY = BB_min_(1) + 1; indY <= BB_max_(1) - 1; indY++)
@@ -573,11 +546,7 @@ namespace gradient_cost_plugin
         costmap_[costmapIdx] = cost;
         grid_map_.at("cost", mapIdx) = cost;
 
-        // std::cout << node->get_name()
-        //           << " costmap pos (" << mx << "," << my << ") size ("
-        //           << getSizeInCellsX() << "," << getSizeInCellsY()
-        //           << ") index " << costmapIdx << "\n";
-          touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
+        touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
 
         // First a look at the 8 neighbours to check step size.
         if ((fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-1))
@@ -604,142 +573,22 @@ namespace gradient_cost_plugin
       }
     }
 
-    // std::cout << node->get_name() << " grid_map_ last pos " << indX << " " << indY << std::endl;
-
     auto msg = grid_map::GridMapRosConverter::toMessage(grid_map_);
     gridMapPub_->publish(std::move(msg));
-      
-
-
-
-      // - iterate through the calculated normals and add a cost to the layer
-      //   if the normal is too horizontal.
-
-      // double sqObstacleMaxRange = obs.obstacle_max_range_
-      //                                * obs.obstacle_max_range_;
-      // double sqObstacleMinRange = obs.obstacle_min_range_
-      //                                * obs.obstacle_min_range_;
-
-      // pcl::PointCloud<pcl::Normal>::iterator normalIter;
-      // pcl::PointCloud<pcl::PointXYZ>::iterator cloudIter
-      //     = pclCloudPtr_->points.begin();
-      // for (normalIter = cloudNormals->points.begin();
-      //      normalIter < cloudNormals->points.end();
-      //      normalIter++, cloudIter++)
-      // {
-      //   double px = cloudIter->x;
-      //   double py = cloudIter->y;
-      //   double pz = cloudIter->z;
-      //   double nx = normalIter->normal_x;
-      //   double ny = normalIter->normal_y;
-      //   double nz = normalIter->normal_z;
-
-      //   // Ignore points too far or too close.
-      //   double sqDist =
-      //       (px - obs.origin_.x) * (px - obs.origin_.x) +
-      //       (py - obs.origin_.y) * (py - obs.origin_.y) +
-      //       (pz - obs.origin_.z) * (pz - obs.origin_.z);
-
-      //   if (sqDist >= sqObstacleMaxRange)
-      //   {
-      //     RCLCPP_DEBUG(logger_, "The point is too far away");
-      //     continue;
-      //   }
-      //   if (sqDist < sqObstacleMinRange)
-      //   {
-      //     RCLCPP_DEBUG(logger_, "The point is too close");
-      //     continue;
-      //   }
-
-      //   // Angle between the normal (nx,ny,nz) and the vertical (0,0,1).
-      //   double angle = acos((0 + 0 + nz*1)
-      //         / (sqrt(nx*nx + ny*ny + nz*nz)));
-      //   // Angles in [pi/2, pi] need to be mirrored to fall in [0, pi/2] as
-      //   // they correspond to an upside down face which seems to happen on
-      //   // (near) horizontal faces
-      //   if (angle > M_PI_2)
-      //   {
-      //     angle = M_PI - angle; 
-      //   }
-
-      //   // The cost is a char.  Maximum cost is for a maximum allowed
-      //   // angle.  Minimum value is for a horizontal
-      //   // gradient (angle 0).
-      //   unsigned char cost = fmin(angle, maxGradient_) / maxGradient_ * 255;
-
-      //   // if (cost != 0)
-      //     // std::cout << nx << " " << ny << " " << nz << " " << angle << " "
-      //     //   << int(cost)
-      //     //   << std::endl;
-
-      //   unsigned int mx, my;
-      //   if (!worldToMap(px, py, mx, my))
-      //   {
-      //     RCLCPP_DEBUG(logger_, "Computing map coords failed");
-      //     continue;
-      //   }
-      //   unsigned int index = getIndex(mx, my);
-      //   // costmap_[index] = LETHAL_OBSTACLE;
-      //   costmap_[index] = cost;
-      //   touch(px, py, min_x, min_y, max_x, max_y);
-      // }
-
-
-
-
-
-
-
-      // sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud, "x");
-      // sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud, "y");
-      // sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud, "z");
-
-      // for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z)
-      // {
-      //   double px = *iter_x, py = *iter_y, pz = *iter_z;
-
-      //   // if the obstacle is too low, we won't add it
-      //   if (pz < min_obstacle_height_)
-      //   {
-      //     RCLCPP_DEBUG(logger_, "The point is too low");
-      //     continue;
-      //   }
-
-      //   // if the obstacle is too high we won't add it
-      //   if (pz > max_obstacle_height_)
-      //   {
-      //     RCLCPP_DEBUG(logger_, "The point is too high");
-      //     continue;
-      //   }
-
-
-      //   // now we need to compute the map coordinates for the observation
-      //   unsigned int mx, my;
-      //   if (!worldToMap(px, py, mx, my))
-      //   {
-      //     RCLCPP_DEBUG(logger_, "Computing map coords failed");
-      //     continue;
-      //   }
-
-      //   unsigned int index = getIndex(mx, my);
-      //   costmap_[index] = LETHAL_OBSTACLE;
-      //   touch(px, py, min_x, min_y, max_x, max_y);
-      // }
-
-    // buffer the point cloud
-    // buffer->lock();
-    // buffer->bufferCloud(*message);
-    // buffer->unlock();
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
   }
 
-  void
-  GradientCostLayer::updateFootprint(
-      double robot_x, double robot_y, double robot_yaw,
-      double *min_x, double *min_y,
-      double *max_x,
-      double *max_y)
+
+
+
+
+
+  void GradientCostLayer::updateFootprint(double robot_x, double robot_y,
+                                          double robot_yaw,
+                                          double *min_x, double *min_y,
+                                          double *max_x,
+                                          double *max_y)
   {
     if (!footprint_clearing_enabled_)
     {
@@ -755,9 +604,8 @@ namespace gradient_cost_plugin
     }
   }
 
-  void
-  GradientCostLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid,
-                                 int min_i, int min_j, int max_i, int max_j)
+  void GradientCostLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid,
+                                      int min_i, int min_j, int max_i, int max_j)
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
     if (!enabled_)
@@ -781,73 +629,6 @@ namespace gradient_cost_plugin
     updateWithOverwrite(master_grid, min_i, min_j, max_i, max_j);
   }
 
-  // bool
-  // GradientCostLayer::getMarkingObservations(std::vector<Observation> &marking_observations) const
-  // {
-  //   bool current = true;
-  //   // get the marking observations
-  //   for (unsigned int i = 0; i < marking_buffers_.size(); ++i)
-  //   {
-  //     marking_buffers_[i]->lock();
-  //     marking_buffers_[i]->getObservations(marking_observations);
-  //     current = marking_buffers_[i]->isCurrent() && current;
-  //     marking_buffers_[i]->unlock();
-  //   }
-  //   marking_observations.insert(
-  //       marking_observations.end(),
-  //       static_marking_observations_.begin(), static_marking_observations_.end());
-  //   return current;
-  // }
-
-  // bool
-  // GradientCostLayer::getClearingObservations(std::vector<Observation> &clearing_observations) const
-  // {
-  //   bool current = true;
-  //   // get the clearing observations
-  //   for (unsigned int i = 0; i < clearing_buffers_.size(); ++i)
-  //   {
-  //     clearing_buffers_[i]->lock();
-  //     clearing_buffers_[i]->getObservations(clearing_observations);
-  //     current = clearing_buffers_[i]->isCurrent() && current;
-  //     clearing_buffers_[i]->unlock();
-  //   }
-  //   clearing_observations.insert(
-  //       clearing_observations.end(),
-  //       static_clearing_observations_.begin(), static_clearing_observations_.end());
-  //   return current;
-  // }
-
-
-  // void
-  // GradientCostLayer::activate()
-  // {
-    // for (auto &notifier : observation_notifiers_)
-    // {
-    //   notifier->clear();
-    // }
-
-    // if we're stopped we need to re-subscribe to topics
-    // for (unsigned int i = 0; i < observation_subscribers_.size(); ++i)
-    // {
-    //   if (observation_subscribers_[i] != NULL)
-    //   {
-    //     observation_subscribers_[i]->subscribe();
-    //   }
-    // }
-    // resetBuffersLastUpdated();
-  // }
-
-  // void
-  // GradientCostLayer::deactivate()
-  // {
-  //   for (unsigned int i = 0; i < observation_subscribers_.size(); ++i)
-  //   {
-  //     if (observation_subscribers_[i] != NULL)
-  //     {
-  //       observation_subscribers_[i]->unsubscribe();
-  //     }
-  //   }
-  // }
 
   void
   GradientCostLayer::reset()
@@ -858,19 +639,7 @@ namespace gradient_cost_plugin
     was_reset_ = true;
   }
 
-  // void
-  // GradientCostLayer::resetBuffersLastUpdated()
-  // {
-    // for (unsigned int i = 0; i < observation_buffers_.size(); ++i)
-    // {
-    //   if (observation_buffers_[i])
-    //   {
-    //     observation_buffers_[i]->resetLastUpdated();
-    //   }
-    // }
-  // }
-
-} // namespace nav2_costmap_2d
+} // namespace gradient_cost_plugin
 
 #include "pluginlib/class_list_macros.hpp"
 PLUGINLIB_EXPORT_CLASS(gradient_cost_plugin::GradientCostLayer,

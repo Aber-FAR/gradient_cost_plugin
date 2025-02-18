@@ -24,17 +24,17 @@
 #include <string>
 #include <vector>
 
-#include <pcl/PCLPointCloud2.h>
-#include <pcl/conversions.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_types.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/visualization/cloud_viewer.h>
+// #include <pcl/PCLPointCloud2.h>
+// #include <pcl/conversions.h>
+// #include <pcl_conversions/pcl_conversions.h>
+// #include <pcl/point_types.h>
+// #include <pcl/features/normal_3d.h>
+// #include <pcl/visualization/cloud_viewer.h>
 
 #include <grid_map_core/GridMap.hpp>
-#include <grid_map_pcl/GridMapPclLoader.hpp>
-#include <grid_map_pcl/helpers.hpp>
-namespace gm = ::grid_map::grid_map_pcl;
+// #include <grid_map_pcl/GridMapPclLoader.hpp>
+// #include <grid_map_pcl/helpers.hpp>
+// namespace gm = ::grid_map::grid_map_pcl;
 #include <grid_map_ros/GridMapRosConverter.hpp>
 #include <grid_map_costmap_2d/costmap_2d_converter.hpp>
 
@@ -57,7 +57,8 @@ namespace gm = ::grid_map::grid_map_pcl;
 #include <nav2_costmap_2d/footprint.hpp>
 #include <tf2_ros/buffer.h>
 
-//#define DO_DEBUG
+// #define DO_DEBUG
+#define DO_BENCHMARK
 
 namespace gradient_cost_plugin
 {
@@ -229,6 +230,16 @@ protected:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr PC2_sub_ = nullptr;
 
   /*!
+   * \brief Received point cloud transformed to the global_frame.
+   */
+  sensor_msgs::msg::PointCloud2 cloud_transf_;
+
+  /*!
+   * \brief Origin of the sensor, transformed to global frame.
+   */
+  geometry_msgs::msg::PointStamped orig_transf_point_;
+
+  /*!
    * \brief GridMap where the received pointcloud2 is stored.
    *
    * This is done after filtering and frame change.
@@ -251,15 +262,15 @@ protected:
    */
   sensor_msgs::msg::PointCloud2 global_frame_cloud_;
 
-  /*!
+  /*
    * \brief PCL pointcloud2 to convert from the ROS pointcloud2.
    */
-  pcl::PCLPointCloud2 pclCloud2_;
-  
-  /*!
+//   pcl::PCLPointCloud2 pclCloud2_;
+
+  /*
    * \brief PCL pointcloud pointer to convert from the pointcloud2 and manipulate later.
    */
-  pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_ = nullptr;
+//   pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_ = nullptr;
 
   /*!
    * \brief Buffer for the TFs received.
@@ -276,11 +287,11 @@ protected:
    */
   tf2::Duration tf_tolerance_;
 
-  /*!
+  /*
    * \brief GridMap PCL loader.
    */
-  std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_ = nullptr;
-  
+//   std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_ = nullptr;
+
   /*!
    * \brief Max range for looking at obstacles.
    * This is used to filter out points from the pointcloud that are too far away.
@@ -303,10 +314,10 @@ protected:
    */
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPub_ = nullptr;
 
-  /*!
+  /*
    * \brief Name of the GridMap PCL loader config file.
    */
-  std::string grid_map_config_file_;
+//   std::string grid_map_config_file_;
 
   /*!
    * \brief Maximum size allowed for a step.
@@ -318,6 +329,12 @@ protected:
    */
   std::string sensor_frame_;
 
+#ifdef DO_BENCHMARK
+  rclcpp::Duration pcCallbackElapsedTime_ = rclcpp::Duration(0, 0);
+  unsigned short pcCallbackNbFrames_ = 0;
+  rclcpp::Duration updateBoundsElapsedTime_ = rclcpp::Duration(0, 0);
+  unsigned short updateBoundsNbFrames_ = 0;
+#endif // DO_BENCHMARK
 };
 
 }  // namespace gradient_cost_plugin
