@@ -13,10 +13,13 @@
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
-  <depend>nav2_costmap_2d</depend>
-  <depend>pluginlib</depend>
   <depend>rclcpp</depend>
-  <depend>message_filters</depend>
+  <depend>pluginlib</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>grid_map_ros</depend>
+  <depend>grid_map_costmap_2d</depend>
+
+<!--   <depend>message_filters</depend> -->
 
   <export>
     <costmap_2d plugin="${prefix}/gradient_cost_layer.xml" />

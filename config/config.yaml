@@ -1,0 +1,25 @@
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      footprint: "[ [0.28, 0.14], [0.28, -0.14], [-0.243, -0.14], [-0.243, 0.14] ]"
+      rolling_window: False
+      width: 500
+      height: 500
+      resolution: 0.5
+      origin_x: -1.0
+      origin_y: -250.0
+      track_unknown_space: false
+      plugins: ["gradient_layer"]
+      gradient_layer:
+        plugin: "gradient_cost_plugin::GradientCostLayer"
+        enabled: True
+        max_step: 0.3
+        min_angle: 10
+        max_angle: 40
+        topic: /oak/points
+        obstacle_max_range: 5.0
+        obstacle_min_range: 0.2

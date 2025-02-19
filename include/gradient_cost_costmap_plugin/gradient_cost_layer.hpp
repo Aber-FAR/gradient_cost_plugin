@@ -24,24 +24,13 @@
 #include <string>
 #include <vector>
 
-// #include <pcl/PCLPointCloud2.h>
-// #include <pcl/conversions.h>
-// #include <pcl_conversions/pcl_conversions.h>
-// #include <pcl/point_types.h>
-// #include <pcl/features/normal_3d.h>
-// #include <pcl/visualization/cloud_viewer.h>
-
 #include <grid_map_core/GridMap.hpp>
-// #include <grid_map_pcl/GridMapPclLoader.hpp>
-// #include <grid_map_pcl/helpers.hpp>
-// namespace gm = ::grid_map::grid_map_pcl;
 #include <grid_map_ros/GridMapRosConverter.hpp>
 #include <grid_map_costmap_2d/costmap_2d_converter.hpp>
 
 
 
 #include <rclcpp/rclcpp.hpp>
-#include <laser_geometry/laser_geometry.hpp>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wreorder"
 #include <tf2_ros/message_filter.h>
@@ -56,9 +45,6 @@
 #include <nav2_costmap_2d/observation_buffer.hpp>
 #include <nav2_costmap_2d/footprint.hpp>
 #include <tf2_ros/buffer.h>
-
-// #define DO_DEBUG
-#define DO_BENCHMARK
 
 namespace gradient_cost_plugin
 {
@@ -90,7 +76,8 @@ public:
   virtual void onInitialize();
 
   /*!
-   * \brief Update the bounds of the master costmap by this layer's update dimensions
+   * \brief Update the bounds of the master costmap by this layer's update
+   * dimensions
    * \param robot_x X pose of robot
    * \param robot_y Y pose of robot
    * \param robot_yaw Robot orientation
@@ -100,8 +87,8 @@ public:
    * \param max_y Y max map coord of the window to update
    */
   virtual void updateBounds(double robot_x, double robot_y, double robot_yaw,
-                            double * min_x, double * min_y,
-                            double * max_x, double * max_y);
+                            double* min_x, double* min_y,
+                            double* max_x, double* max_y);
 
   /*!
    * \brief Update the costs in the master costmap in the window
@@ -111,18 +98,8 @@ public:
    * \param max_x X max map coord of the window to update
    * \param max_y Y max map coord of the window to update
    */
-  virtual void updateCosts(nav2_costmap_2d::Costmap2D & master_grid,
+  virtual void updateCosts(nav2_costmap_2d::Costmap2D& master_grid,
                            int min_i, int min_j, int max_i, int max_j);
-
-  /*!
-   * \brief Deactivate the layer
-   */
-  // virtual void deactivate();
-
-  /*!
-   * \brief Activate the layer
-   */
-  // virtual void activate();
 
   /*!
    * \brief Reset this costmap
@@ -136,93 +113,43 @@ public:
 
   /*!
    * \brief Callback executed when a parameter change is detected
-   * \param event ParameterEvent message
+   * \param parameters ParameterEvent message
    */
   rcl_interfaces::msg::SetParametersResult
     dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters);
-
-  /*
-   * \brief triggers the update of observations buffer
-   */
-  // void resetBuffersLastUpdated();
 
   /*!
    * \brief  A callback to handle buffering PointCloud2 messages
    * \param cloud The cloud (message) returned from a message notifier
    */
-  void pointCloud2Callback(
-    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
-
-  // for testing purposes
-  // void addStaticObservation(nav2_costmap_2d::Observation& obs,
-  //                           bool marking, bool clearing);
-  // void clearStaticObservations(bool marking, bool clearing);
+  void pointCloud2Callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
 
 protected:
-  /*
-   * \brief  Get the observations used to mark space
-   * \param marking_observations A reference to a vector that will be populated
-   * with the observations
-   * \return True if all the observation buffers are current, false otherwise
-   */
-  // bool getMarkingObservations(
-  //   std::vector<nav2_costmap_2d::Observation>& marking_observations) const;
-
-  /*
-   * \brief  Get the observations used to clear space
-   * \param clearing_observations A reference to a vector that will be
-   * populated with the observations
-   * \return True if all the observation buffers are current, false otherwise
-   */
-  // bool getClearingObservations(
-  //   std::vector<nav2_costmap_2d::Observation>& clearing_observations) const;
 
   std::vector<geometry_msgs::msg::Point> transformed_footprint_;
   bool footprint_clearing_enabled_;
 
   /*!
-   * \brief Clear costmap layer info below the robot's footprint
+   * \brief Clear costmap layer info below the robot's footprint.
+   * \param robot_x X pose of robot
+   * \param robot_y Y pose of robot
+   * \param robot_yaw Robot orientation
+   * \param min_x X min map coord of the window to update
+   * \param min_y Y min map coord of the window to update
+   * \param max_x X max map coord of the window to update
+   * \param max_y Y max map coord of the window to update
    */
-  void updateFootprint(
-    double robot_x, double robot_y, double robot_yaw,
-    double * min_x, double * min_y,
-    double * max_x, double * max_y);
+  void updateFootprint(double robot_x, double robot_y, double robot_yaw,
+                       double* min_x, double* min_y,
+                       double* max_x, double* max_y);
 
   std::string global_frame_;  ///< \brief The global frame for the costmap
-  double min_obstacle_height_;  ///< \brief Max Obstacle Height
-  double max_obstacle_height_;  ///< \brief Max Obstacle Height
-
-  /// \brief Used to project laser scans into point clouds
-  laser_geometry::LaserProjection projector_;
-  // \brief Used for the observation message filters
-  // std::vector<std::shared_ptr<message_filters::SubscriberBase<rclcpp_lifecycle::LifecycleNode>>>
-  // observation_subscribers_;
-  // \brief Used to make sure that transforms are available for each sensor
-  // std::vector<std::shared_ptr<tf2_ros::MessageFilterBase>> observation_notifiers_;
-  // \brief Used to store observations from various sensors
-  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> observation_buffers_;
-  // \brief Used to store observation buffers used for marking obstacles
-  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> marking_buffers_;
-  // \brief Used to store observation buffers used for clearing obstacles
-  // std::vector<std::shared_ptr<nav2_costmap_2d::ObservationBuffer>> clearing_buffers_;
 
   /// \brief Dynamic parameters handler
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr dyn_params_handler_;
 
-  // Used only for testing purposes
-  // std::vector<nav2_costmap_2d::Observation> static_clearing_observations_;
-  // std::vector<nav2_costmap_2d::Observation> static_marking_observations_;
-
   bool rolling_window_;
   bool was_reset_;
-//   int combination_method_;
-
-#ifdef DO_DEBUG
-  /*!
-   * \brief pointcloud2 publisher.
-   */
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr debug_pc2_pub_ = nullptr;
-#endif // DO_DEBUG
 
   /*!
    * \brief Pointcloud2 subscriber.
@@ -296,13 +223,13 @@ protected:
    * \brief Max range for looking at obstacles.
    * This is used to filter out points from the pointcloud that are too far away.
    */
-  float obstacle_max_range_;
+  float obstacle_max_range_ = 5.0;
 
   /*!
    * \brief Min range for looking at obstacles.
    * This is used to filter out points from the pointcloud that are too close.
    */
-  float obstacle_min_range_;
+  float obstacle_min_range_ = 0.0;
 
   /*!
    * \brief Maximum gradient over which the ground is marked as lethal.
@@ -320,21 +247,29 @@ protected:
 //   std::string grid_map_config_file_;
 
   /*!
-   * \brief Maximum size allowed for a step.
+   * \brief Maximum size allowed for a step (m).
    */
-  float maxStep_ = 0.05;
+  float max_step_ = 0.20;
+
+  /*!
+   * \brief Minimum angle of the slope (rad).
+   *
+   * Any angle below that maps to a cost of 0.
+   */
+  float min_angle_ = 10;
+
+  /*!
+   * \brief Maximum angle of the slope (rad).
+   *
+   * Any angle above that maps to a cost of LETHAL_OBSTACLE.
+   */
+  float max_angle_ = 40;
 
   /*!
    * \brief Name of the frame of the sensor.
    */
   std::string sensor_frame_;
 
-#ifdef DO_BENCHMARK
-  rclcpp::Duration pcCallbackElapsedTime_ = rclcpp::Duration(0, 0);
-  unsigned short pcCallbackNbFrames_ = 0;
-  rclcpp::Duration updateBoundsElapsedTime_ = rclcpp::Duration(0, 0);
-  unsigned short updateBoundsNbFrames_ = 0;
-#endif // DO_BENCHMARK
 };
 
 }  // namespace gradient_cost_plugin
