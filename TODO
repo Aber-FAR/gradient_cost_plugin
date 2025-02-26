@@ -1,1 +1,3 @@
 - Clearing the footprint in the traditional way (setting it to free space) makes no sense here.  Instead we should set the cost to that calculated from the tilt and roll of the robot (from IMU).
+
+- Publish GridMaps with Best_EFFORT QoS.

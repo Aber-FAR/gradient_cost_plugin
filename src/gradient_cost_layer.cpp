@@ -130,7 +130,7 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "obstacle_min_range", obstacle_min_range_);
 
     std::string nodeName(node->get_name());
-    gridMapPub_ = node->create_publisher<grid_map_msgs::msg::GridMap>(
+    grid_map_pub_ = node->create_publisher<grid_map_msgs::msg::GridMap>(
         nodeName + "/grid_map_from_pointcloud",
         10);
 
@@ -513,8 +513,11 @@ namespace gradient_cost_plugin
       }
     }
 
-    auto msg = grid_map::GridMapRosConverter::toMessage(grid_map_);
-    gridMapPub_->publish(std::move(msg));
+    if (grid_map_pub_->get_subscription_count() > 0)
+    {
+      auto msg = grid_map::GridMapRosConverter::toMessage(grid_map_);
+      grid_map_pub_->publish(std::move(msg));
+    }
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
   }

@@ -239,7 +239,7 @@ protected:
   /*!
    * \brief Grid map publisher.
    */
-  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr gridMapPub_ = nullptr;
+  rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_ = nullptr;
 
   /*
    * \brief Name of the GridMap PCL loader config file.
