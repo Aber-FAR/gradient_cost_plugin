@@ -79,8 +79,8 @@ namespace gradient_cost_plugin
     }
 
     node->get_parameter(name_ + "." + "enabled", enabled_);
-    node->get_parameter(name_ + "." + "footprint_clearing_enabled",
-                        footprint_clearing_enabled_);
+//     node->get_parameter(name_ + "." + "footprint_clearing_enabled",
+//                         footprint_clearing_enabled_);
     node->get_parameter("transform_tolerance", transform_tolerance);
     tf_tolerance_ = tf2::durationFromSec(transform_tolerance);
     node->get_parameter(name_ + "." + "max_step", max_step_);
@@ -208,10 +208,10 @@ namespace gradient_cost_plugin
             current_ = false;
           }
         }
-        else if (param_name == name_ + "." + "footprint_clearing_enabled")
-        {
-          footprint_clearing_enabled_ = parameter.as_bool();
-        }
+//         else if (param_name == name_ + "." + "footprint_clearing_enabled")
+//         {
+//           footprint_clearing_enabled_ = parameter.as_bool();
+//         }
       }
       else if (param_type == ParameterType::PARAMETER_INTEGER)
       {
