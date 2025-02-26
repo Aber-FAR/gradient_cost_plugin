@@ -137,8 +137,9 @@ namespace gradient_cost_plugin
     tf2_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_sensor_data);
     PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-      topic, 10, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
+      topic, qos, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
 
     //
     // Initialise the grid map.
