@@ -1,6 +1,5 @@
 <library path="gradient_cost_plugin_core">
-  <class type="gradient_cost_plugin::GradientCostLayer"
-         base_class_type="nav2_costmap_2d::Layer">
+  <class type="gradient_cost_plugin::GradientCostLayer" base_class_type="costmap_2d::Layer">
     <description>
       Costmap layer that calculates a cost based on the gradient of the surfaces
     </description>

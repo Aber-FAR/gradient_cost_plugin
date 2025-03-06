@@ -26,17 +26,12 @@
 #include <cmath>
 
 #include <pluginlib/class_list_macros.hpp>
-#include <sensor_msgs/point_cloud2_iterator.hpp>
-#include <geometry_msgs/msg/point_stamped.hpp>
-#include <nav2_costmap_2d/costmap_math.hpp>
+#include <sensor_msgs/point_cloud2_iterator.h>
+#include <costmap_2d/costmap_math.h>
 
-using nav2_costmap_2d::FREE_SPACE;
-using nav2_costmap_2d::LETHAL_OBSTACLE;
-using nav2_costmap_2d::NO_INFORMATION;
-
-using rcl_interfaces::msg::ParameterType;
-
-using std::placeholders::_1;
+using costmap_2d::FREE_SPACE;
+using costmap_2d::LETHAL_OBSTACLE;
+using costmap_2d::NO_INFORMATION;
 
 namespace gradient_cost_plugin
 {
@@ -46,8 +41,7 @@ namespace gradient_cost_plugin
    */
   GradientCostLayer::~GradientCostLayer()
   {
-    dyn_params_handler_.reset();
-
+    dy_param_server_.reset();
   }
 
   /*!
@@ -56,52 +50,34 @@ namespace gradient_cost_plugin
   void GradientCostLayer::onInitialize()
   {
     double transform_tolerance;
+    std::string topic;
 
-    declareParameter("enabled", rclcpp::ParameterValue(true));
-    declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
-    declareParameter("min_obstacle_height", rclcpp::ParameterValue(0.0));
-    declareParameter("max_obstacle_height", rclcpp::ParameterValue(2.0));
-    declareParameter("observation_sources",
-                     rclcpp::ParameterValue(std::string("")));
-    declareParameter("max_step",
-                     rclcpp::ParameterValue(max_step_));
+    /* get parameters */
+    nh_ = ros::NodeHandle("~/" + name_);
+    nh_.param<bool>("enabled", enabled_, true);
+    nh_.param<bool>("footprint_clearing_enabled", footprint_clearing_enabled_, true);
+    // [[deprecated]]
+    // nh_.getParam("min_obstacle_height", min_obstacle_height_, 0.0);
+    // nh_.getparam("max_obstacle_height", max_obstacle_height_, 2.0);
+    // nh_.getParam("observation_sources", observation_sources_, std::string(""));
+    nh_.param<float>("max_step", max_step_, 0.3);
     int tmp_angle = static_cast<int>(min_angle_ + 0.5);
-    declareParameter("min_angle",
-                     rclcpp::ParameterValue(tmp_angle));
+    nh_.param<float>("min_angle", min_angle_, 15.0);
     tmp_angle = static_cast<int>(max_angle_ + 0.5);
-    declareParameter("max_angle",
-                     rclcpp::ParameterValue(tmp_angle));
-
-    auto node = node_.lock();
-    if (!node)
-    {
-      throw std::runtime_error{"Failed to lock node"};
-    }
-
-    node->get_parameter(name_ + "." + "enabled", enabled_);
-//     node->get_parameter(name_ + "." + "footprint_clearing_enabled",
-//                         footprint_clearing_enabled_);
-    node->get_parameter("transform_tolerance", transform_tolerance);
-    tf_tolerance_ = tf2::durationFromSec(transform_tolerance);
-    node->get_parameter(name_ + "." + "max_step", max_step_);
-    node->get_parameter(name_ + "." + "min_angle", tmp_angle);
+    nh_.param<float>("max_angle", max_angle_, 45.0);
+    nh_.param<double>("transform_tolerance", transform_tolerance, 0.3);
+    nh_.param<std::string>("topic", topic, std::string(""));
+    nh_.param<std::string>("sensor_frame", sensor_frame_, std::string(""));
+    nh_.param<float>("obstacle_max_range", obstacle_max_range_, 3.0);
+    nh_.param<float>("obstacle_min_range", obstacle_min_range_, 0.0);
+    tf_tolerance_ = ros::Duration(transform_tolerance);
     min_angle_ = static_cast<float>(tmp_angle) / 180.0 * M_PI;
-    node->get_parameter(name_ + "." + "max_angle", tmp_angle);
     max_angle_ = static_cast<float>(tmp_angle) / 180.0 * M_PI;
 
-    if (rcutils_logging_set_logger_level("gradient_cost_layer",
-                                         RCUTILS_LOG_SEVERITY_ERROR)
-            != RCUTILS_RET_OK)
-    {
-      RCLCPP_DEBUG(logger_,
-        "Could not change logging level of logger 'gradient_cost_layer'");
-    }
-
-    dyn_params_handler_ = node->add_on_set_parameters_callback(
-        std::bind(
-            &GradientCostLayer::dynamicParametersCallback,
-            this,
-            std::placeholders::_1));
+    dy_param_server_.reset(new dynamic_reconfigure::Server<gradient_cost_plugin::GradientCostPluginConfig>(nh_));
+    dynamic_reconfigure::Server<gradient_cost_plugin::GradientCostPluginConfig>::CallbackType cb =
+        boost::bind(&GradientCostLayer::reconfigureCB, this, _1, _2);
+    dy_param_server_->setCallback(cb);
 
     rolling_window_ = layered_costmap_->isRolling();
 
@@ -114,32 +90,12 @@ namespace gradient_cost_plugin
 
     global_frame_ = layered_costmap_->getGlobalFrameID();
 
-    std::string topic;
+    gridMapPub_ = nh_.advertise<grid_map_msgs::GridMap>("Gradient_cost_layer/grid_map_from_pointcloud", 10);
 
-    declareParameter("topic", rclcpp::ParameterValue(""));
-    declareParameter("sensor_frame", rclcpp::ParameterValue(std::string("")));
-    declareParameter("obstacle_max_range",
-                     rclcpp::ParameterValue(obstacle_max_range_));
-    declareParameter("obstacle_min_range",
-                     rclcpp::ParameterValue(obstacle_min_range_));
-
-    node->get_parameter(name_ + "." + "topic", topic);
-    node->get_parameter(name_ + "." + "sensor_frame", sensor_frame_);
-
-    node->get_parameter(name_ + "." + "obstacle_max_range", obstacle_max_range_);
-    node->get_parameter(name_ + "." + "obstacle_min_range", obstacle_min_range_);
-
-    std::string nodeName(node->get_name());
-    gridMapPub_ = node->create_publisher<grid_map_msgs::msg::GridMap>(
-        nodeName + "/grid_map_from_pointcloud",
-        10);
-
-    tf2_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+    tf2_buffer_ = std::make_unique<tf2_ros::Buffer>();
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_sensor_data);
-    PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-      topic, qos, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
+    PC2_sub_ = nh_.subscribe(topic, 1, &GradientCostLayer::pointCloud2Callback, this);
 
     //
     // Initialise the grid map.
@@ -167,82 +123,29 @@ namespace gradient_cost_plugin
     grid_map_.add("cost");
   }
 
-
   /*!
    * \brief Callback executed when a parameter change is detected
-   * \param parameters ParameterEvent message
+   * \param config
+   * \param level
    */
-  rcl_interfaces::msg::SetParametersResult
-  GradientCostLayer::dynamicParametersCallback(
-                              std::vector<rclcpp::Parameter> parameters)
+  void GradientCostLayer::reconfigureCB(gradient_cost_plugin::GradientCostPluginConfig &config, uint32_t level)
   {
-    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
-    rcl_interfaces::msg::SetParametersResult result;
-
-    for (auto parameter : parameters)
-    {
-      const auto &param_type = parameter.get_type();
-      const auto &param_name = parameter.get_name();
-
-      if (param_type == ParameterType::PARAMETER_DOUBLE)
-      {
-        if (param_name == name_ + "." + "max_step")
-        {
-          max_step_ = parameter.as_double();
-        }
-        else if (param_name == name_ + "." + "max_angle")
-        {
-          max_angle_ = parameter.as_double();
-        }
-        else if (param_name == name_ + "." + "min_angle")
-        {
-          min_angle_ = parameter.as_double();
-        }
-      }
-      else if (param_type == ParameterType::PARAMETER_BOOL)
-      {
-        if (param_name == name_ + "." + "enabled" && enabled_ != parameter.as_bool())
-        {
-          enabled_ = parameter.as_bool();
-          if (enabled_)
-          {
-            current_ = false;
-          }
-        }
-//         else if (param_name == name_ + "." + "footprint_clearing_enabled")
-//         {
-//           footprint_clearing_enabled_ = parameter.as_bool();
-//         }
-      }
-      else if (param_type == ParameterType::PARAMETER_INTEGER)
-      {
-        // if (param_name == name_ + "." + "combination_method")
-        // {
-        //   combination_method_ = parameter.as_int();
-        // }
-      }
-    }
-
-    result.successful = true;
-    return result;
+    enabled_ = config.enabled;
+    footprint_clearing_enabled_ = config.footprint_clearing_enabled;
+    max_step_ = config.max_step;
+    max_angle_ = config.max_angle;
+    min_angle_ = config.min_angle;
   }
 
   /*!
    * \brief  A callback to handle buffering PointCloud2 messages
    * \param cloud The cloud (message) returned from a message notifier
    */
-  void GradientCostLayer::pointCloud2Callback(
-                    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud)
+  void GradientCostLayer::pointCloud2Callback(sensor_msgs::PointCloud2::ConstPtr cloud)
   {
-    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
-
-    auto node = node_.lock();
-
-    //
     // We transform the pointcloud to the global frame.  This makes a copy of
     // the pointcloud.
-    std::string origin_frame = (sensor_frame_ == "" ?
-      cloud->header.frame_id : sensor_frame_);
+    std::string origin_frame = (sensor_frame_ == "" ? cloud->header.frame_id : sensor_frame_);
 
     cloud_transf_.header.stamp = cloud->header.stamp;
     cloud_transf_.header.frame_id = origin_frame;
@@ -251,19 +154,18 @@ namespace gradient_cost_plugin
       tf2_buffer_->transform(*cloud, cloud_transf_,
                              global_frame_, tf_tolerance_);
     }
-    catch (tf2::TransformException & ex)
+    catch (tf2::TransformException &ex)
     {
       // if an exception occurs, we need to remove the empty observation from the list
-      RCLCPP_ERROR(
-        logger_,
-        "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
-        origin_frame.c_str(),
-        cloud->header.frame_id.c_str(), ex.what());
+      ROS_ERROR(
+          "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+          origin_frame.c_str(),
+          cloud->header.frame_id.c_str(), ex.what());
       return;
     }
 
     // We save the origin of the sensor, in the global frame.
-    geometry_msgs::msg::PointStamped orig_point;
+    geometry_msgs::PointStamped orig_point;
     orig_point.header.stamp = cloud->header.stamp;
     orig_point.header.frame_id = cloud->header.frame_id;
     orig_point.point.x = 0;
@@ -274,23 +176,19 @@ namespace gradient_cost_plugin
       tf2_buffer_->transform(orig_point, orig_transf_point_,
                              global_frame_, tf_tolerance_);
     }
-    catch (tf2::TransformException & ex)
+    catch (tf2::TransformException &ex)
     {
       // if an exception occurs, we need to remove the empty observation from the list
-      RCLCPP_ERROR(
-        logger_,
-        "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
-        cloud->header.frame_id.c_str(),
-        cloud->header.frame_id.c_str(), ex.what());
+      ROS_ERROR(
+          "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
+          cloud->header.frame_id.c_str(),
+          cloud->header.frame_id.c_str(), ex.what());
       return;
     }
 
     // We have new data to process so we are not current any more.
     current_ = false;
-
   }
-
-
 
   /*!
    * \brief Update the bounds of the master costmap by this layer's update
@@ -305,13 +203,10 @@ namespace gradient_cost_plugin
    */
   void GradientCostLayer::updateBounds(double robot_x, double robot_y,
                                        double robot_yaw,
-                                       double* min_x, double* min_y,
-                                       double* max_x, double* max_y)
+                                       double *min_x, double *min_y,
+                                       double *max_x, double *max_y)
   {
-    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());  
-
-    auto node = node_.lock();
-
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
     if (current_)
     {
       // There is nothing to do so we return.
@@ -342,8 +237,8 @@ namespace gradient_cost_plugin
     BB_min_(0) = BB_min_(1) = std::numeric_limits<int>::max();
 
     // Point from the original pointcloud and a point for the gridmap.
-    geometry_msgs::msg::PointStamped pc_point;
-    geometry_msgs::msg::PointStamped gm_point;
+    geometry_msgs::PointStamped pc_point;
+    geometry_msgs::PointStamped gm_point;
     pc_point.header.stamp = cloud_transf_.header.stamp;
     pc_point.header.frame_id = cloud_transf_.header.frame_id;
 
@@ -355,22 +250,14 @@ namespace gradient_cost_plugin
     // The points that are kept are directly put in the gridmap.
 
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_transf_, "x");
-    std::vector<unsigned char>::const_iterator iter_cloud
-                                          = cloud_transf_.data.begin();
-    std::vector<unsigned char>::const_iterator iter_cloud_end
-                                          = cloud_transf_.data.end();
+    std::vector<unsigned char>::const_iterator iter_cloud = cloud_transf_.data.begin();
+    std::vector<unsigned char>::const_iterator iter_cloud_end = cloud_transf_.data.end();
     for (; iter_cloud != iter_cloud_end;
          ++iter_x, iter_cloud += cloud_transf_.point_step)
     {
-      double pointDepth2 = ((iter_x[0] - orig_transf_point_.point.x)
-                            * (iter_x[0] - orig_transf_point_.point.x))
-                           + ((iter_x[1] - orig_transf_point_.point.y)
-                            * (iter_x[1] - orig_transf_point_.point.y))
-                           + ((iter_x[2] - orig_transf_point_.point.z)
-                            * (iter_x[2] - orig_transf_point_.point.z));
+      double pointDepth2 = ((iter_x[0] - orig_transf_point_.point.x) * (iter_x[0] - orig_transf_point_.point.x)) + ((iter_x[1] - orig_transf_point_.point.y) * (iter_x[1] - orig_transf_point_.point.y)) + ((iter_x[2] - orig_transf_point_.point.z) * (iter_x[2] - orig_transf_point_.point.z));
 
-      if ((pointDepth2 <= (obstacle_max_range_ * obstacle_max_range_))
-          && (pointDepth2 >= (obstacle_min_range_ * obstacle_min_range_)))
+      if ((pointDepth2 <= (obstacle_max_range_ * obstacle_max_range_)) && (pointDepth2 >= (obstacle_min_range_ * obstacle_min_range_)))
       {
         // Make a point from the PC
         gm_point.point.x = iter_x[0];
@@ -426,9 +313,8 @@ namespace gradient_cost_plugin
         bool point_ok = worldToMap(mapPos(0), mapPos(1), mx, my);
         if (!point_ok)
         {
-          RCLCPP_DEBUG_STREAM(logger_,
-            "Computing map coords failed: (" << mapPos(0) << "," << mapPos(1)
-            << ")");
+          ROS_DEBUG_STREAM("Computing map coords failed: (" << mapPos(0) << "," << mapPos(1)
+                                                            << ")");
           continue;
         }
 
@@ -439,22 +325,7 @@ namespace gradient_cost_plugin
         grid_map_.at("cost", mapIdx) = cost;
 
         // First a look at the 8 neighbours to check step size.
-        if ((fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-1))
-                  - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-0,indY-1))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY-1))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-0))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY-0))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY+1))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX-0,indY+1))
-                      - centreElev) > max_step_)
-            || (fabs(grid_map_.at("elevation", grid_map::Index(indX+1,indY+1))
-                      - centreElev) > max_step_))
+        if ((fabs(grid_map_.at("elevation", grid_map::Index(indX - 1, indY - 1)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX - 0, indY - 1)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX + 1, indY - 1)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX - 1, indY - 0)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX + 1, indY - 0)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX - 1, indY + 1)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX - 0, indY + 1)) - centreElev) > max_step_) || (fabs(grid_map_.at("elevation", grid_map::Index(indX + 1, indY + 1)) - centreElev) > max_step_))
         {
           grid_map_.at("cost", mapIdx) = LETHAL_OBSTACLE;
           costmap_[costmapIdx] = LETHAL_OBSTACLE;
@@ -464,23 +335,11 @@ namespace gradient_cost_plugin
 
         // Then we calculate the local gradient using a Sobel operator.
         const float devide = (4.0 * 2.0 * resolution_);
-               // 4.0 for the weighting, 2.0 for 2 increments on x or y
+        // 4.0 for the weighting, 2.0 for 2 increments on x or y
         float grad_x =
-          ( 1.0 * (grid_map_.at("elevation", grid_map::Index(indX+1,indY-1))
-                  - grid_map_.at("elevation", grid_map::Index(indX-1,indY-1)))
-          + 2.0 * (grid_map_.at("elevation", grid_map::Index(indX+1,indY-0))
-                  - grid_map_.at("elevation", grid_map::Index(indX-1,indY-0)))
-          + 1.0 * (grid_map_.at("elevation", grid_map::Index(indX+1,indY+1))
-                  - grid_map_.at("elevation", grid_map::Index(indX-1,indY+1))))
-          / devide;
+            (1.0 * (grid_map_.at("elevation", grid_map::Index(indX + 1, indY - 1)) - grid_map_.at("elevation", grid_map::Index(indX - 1, indY - 1))) + 2.0 * (grid_map_.at("elevation", grid_map::Index(indX + 1, indY - 0)) - grid_map_.at("elevation", grid_map::Index(indX - 1, indY - 0))) + 1.0 * (grid_map_.at("elevation", grid_map::Index(indX + 1, indY + 1)) - grid_map_.at("elevation", grid_map::Index(indX - 1, indY + 1)))) / devide;
         float grad_y =
-          (  1.0 * (grid_map_.at("elevation", grid_map::Index(indX-1,indY+1))
-                   - grid_map_.at("elevation", grid_map::Index(indX-1,indY-1)))
-           + 2.0 * (grid_map_.at("elevation", grid_map::Index(indX+0,indY+1))
-                   - grid_map_.at("elevation", grid_map::Index(indX+0,indY-1)))
-           + 1.0 * (grid_map_.at("elevation", grid_map::Index(indX+1,indY+1))
-                   - grid_map_.at("elevation", grid_map::Index(indX+1,indY-1))))
-           / devide;
+            (1.0 * (grid_map_.at("elevation", grid_map::Index(indX - 1, indY + 1)) - grid_map_.at("elevation", grid_map::Index(indX - 1, indY - 1))) + 2.0 * (grid_map_.at("elevation", grid_map::Index(indX + 0, indY + 1)) - grid_map_.at("elevation", grid_map::Index(indX + 0, indY - 1))) + 1.0 * (grid_map_.at("elevation", grid_map::Index(indX + 1, indY + 1)) - grid_map_.at("elevation", grid_map::Index(indX + 1, indY - 1)))) / devide;
 
         // And the angle to horizontal, in deg.  The normal pointing up to the
         // grid is N = (grad_x, grad_y, 1).  The vertical direction is
@@ -488,8 +347,7 @@ namespace gradient_cost_plugin
         // angle_v = acos((N.V)/sqrt(mag(N)*mag(V))), where '.' is the dot
         // product.  Here N.V = 1 and mag(V) = 1.  he angle N to V is what we
         // need to compare to min_angle_ and max_angle_.
-        float angle = acos(1.0
-                          / sqrt(grad_x * grad_x + grad_y * grad_y + 1));
+        float angle = acos(1.0 / sqrt(grad_x * grad_x + grad_y * grad_y + 1));
         // Angles in [pi/2, pi] need to be mirrored to fall in [0, pi/2] as
         // they correspond to an upside down face which seems to happen on
         // (near) horizontal faces
@@ -504,8 +362,7 @@ namespace gradient_cost_plugin
         else if (angle >= max_angle_)
           cost = LETHAL_OBSTACLE;
         else
-          cost = ((angle - min_angle_)
-                 * LETHAL_OBSTACLE / (max_angle_ - min_angle_));
+          cost = ((angle - min_angle_) * LETHAL_OBSTACLE / (max_angle_ - min_angle_));
 
         // Set the cost in the gris and costmap.
         grid_map_.at("cost", mapIdx) = cost;
@@ -514,13 +371,12 @@ namespace gradient_cost_plugin
       }
     }
 
-    auto msg = grid_map::GridMapRosConverter::toMessage(grid_map_);
-    gridMapPub_->publish(std::move(msg));
+    grid_map_msgs::GridMap msg;
+    grid_map::GridMapRosConverter::toMessage(grid_map_, msg);
+    gridMapPub_.publish(std::move(msg));
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
   }
-
-
 
   /*!
    * \brief Clear costmap layer info below the robot's footprint.
@@ -542,8 +398,8 @@ namespace gradient_cost_plugin
     {
       return;
     }
-    nav2_costmap_2d::transformFootprint(robot_x, robot_y, robot_yaw,
-                                        getFootprint(), transformed_footprint_);
+    costmap_2d::transformFootprint(robot_x, robot_y, robot_yaw,
+                                   getFootprint(), transformed_footprint_);
 
     for (unsigned int i = 0; i < transformed_footprint_.size(); i++)
     {
@@ -551,7 +407,6 @@ namespace gradient_cost_plugin
             min_x, min_y, max_x, max_y);
     }
   }
-
 
   /*!
    * \brief Update the costs in the master costmap in the window
@@ -561,7 +416,7 @@ namespace gradient_cost_plugin
    * \param max_x X max map coord of the window to update
    * \param max_y Y max map coord of the window to update
    */
-  void GradientCostLayer::updateCosts(nav2_costmap_2d::Costmap2D &master_grid,
+  void GradientCostLayer::updateCosts(costmap_2d::Costmap2D &master_grid,
                                       int min_i, int min_j, int max_i, int max_j)
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
@@ -579,25 +434,21 @@ namespace gradient_cost_plugin
 
     if (footprint_clearing_enabled_)
     {
-      setConvexPolygonCost(transformed_footprint_, nav2_costmap_2d::FREE_SPACE);
+      setConvexPolygonCost(transformed_footprint_, costmap_2d::FREE_SPACE);
     }
 
     // We always overwrite.
     updateWithOverwrite(master_grid, min_i, min_j, max_i, max_j);
   }
 
-
-  void
-  GradientCostLayer::reset()
+  void GradientCostLayer::reset()
   {
     resetMaps();
     // resetBuffersLastUpdated();
     current_ = false;
     was_reset_ = true;
   }
+}
+// namespace gradient_cost_plugin
 
-} // namespace gradient_cost_plugin
-
-#include "pluginlib/class_list_macros.hpp"
-PLUGINLIB_EXPORT_CLASS(gradient_cost_plugin::GradientCostLayer,
-                       nav2_costmap_2d::Layer)
+PLUGINLIB_EXPORT_CLASS(gradient_cost_plugin::GradientCostLayer, costmap_2d::Layer)
