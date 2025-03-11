@@ -26,7 +26,8 @@ The slope is then turned into a cost by linearly mapping [`min_angle`, `max_angl
 | `footprint_clearing_enabled` | If true, the robot footprint will clear (mark as free) the space in which it travels. | True | Yes |
 | `max_step` | Maximum step allowed (in m), above which a cell is marked as `LETHAL_OBSTACLE`. | 0.2 | Yes |
 | `max_angle` | Maximum angle from horizontal (in degrees) of the landscape above which the cell is marked as `LETHAL_OBSTACLE`. | 40 | Yes |
-| `min_angle` | Minimum angle from horizontal (in degrees) of the landscape, below which the cell is marked as `FREE_SPACE`. | 10 | Yes |
+| `min_angle` | Minimum angle from horizontal (in degrees) of the landscape, below which the cell is marked as `min_cost`. | 10 | Yes |
+| `min_cost` | Minimum cost to use.  Some planners like having a cost! | 10 | Yes |
 | `topic` | Topic name where to get the pointclouds from. | empty string | No |
 | `obstacle_max_range` | Maximum range in the frame of the sensor to be considered in the pointcloud (also used to set the size of the GridMap). | 5.0 | No |
 | `obstacle_min_range` | Minimum range in the frame of the sensor to be considered in the pointcloud. | 0.0 | No |

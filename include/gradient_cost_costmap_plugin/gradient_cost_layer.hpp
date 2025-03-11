@@ -241,10 +241,12 @@ protected:
    */
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_ = nullptr;
 
-  /*
-   * \brief Name of the GridMap PCL loader config file.
+  /*!
+   * \brief Minimun cost to use.
+   *
+   * For some planners, having a cost (rather than 0) helps.
    */
-//   std::string grid_map_config_file_;
+  float min_cost_ = 10;
 
   /*!
    * \brief Maximum size allowed for a step (m).

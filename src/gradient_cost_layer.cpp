@@ -33,6 +33,7 @@
 using nav2_costmap_2d::FREE_SPACE;
 using nav2_costmap_2d::LETHAL_OBSTACLE;
 using nav2_costmap_2d::NO_INFORMATION;
+using nav2_costmap_2d::MAX_NON_OBSTACLE;
 
 using rcl_interfaces::msg::ParameterType;
 
@@ -58,7 +59,7 @@ namespace gradient_cost_plugin
     double transform_tolerance;
 
     declareParameter("enabled", rclcpp::ParameterValue(true));
-    declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
+//     declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
     declareParameter("min_obstacle_height", rclcpp::ParameterValue(0.0));
     declareParameter("max_obstacle_height", rclcpp::ParameterValue(2.0));
     declareParameter("observation_sources",
@@ -71,6 +72,8 @@ namespace gradient_cost_plugin
     tmp_angle = static_cast<int>(max_angle_ + 0.5);
     declareParameter("max_angle",
                      rclcpp::ParameterValue(tmp_angle));
+    declareParameter("min_cost",
+                     rclcpp::ParameterValue(min_cost_));
 
     auto node = node_.lock();
     if (!node)
@@ -88,6 +91,7 @@ namespace gradient_cost_plugin
     min_angle_ = static_cast<float>(tmp_angle) / 180.0 * M_PI;
     node->get_parameter(name_ + "." + "max_angle", tmp_angle);
     max_angle_ = static_cast<float>(tmp_angle) / 180.0 * M_PI;
+    node->get_parameter(name_ + "." + "min_cost", min_cost_);
 
     if (rcutils_logging_set_logger_level("gradient_cost_layer",
                                          RCUTILS_LOG_SEVERITY_ERROR)
@@ -105,7 +109,10 @@ namespace gradient_cost_plugin
 
     rolling_window_ = layered_costmap_->isRolling();
 
-    default_value_ = FREE_SPACE;
+    // We want NO_INFORMATION as the default value to make sure that when we
+    // copy the local costmap to the master map, only what we have created
+    // gets copied.
+    default_value_ = NO_INFORMATION;
 
     matchSize();
 
@@ -129,15 +136,18 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "obstacle_max_range", obstacle_max_range_);
     node->get_parameter(name_ + "." + "obstacle_min_range", obstacle_min_range_);
 
+    // A QoS object with a sensor profile, only keeping the last message.
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_sensor_data);
+
     std::string nodeName(node->get_name());
+
     grid_map_pub_ = node->create_publisher<grid_map_msgs::msg::GridMap>(
         nodeName + "/grid_map_from_pointcloud",
-        10);
+        qos);
 
     tf2_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_sensor_data);
     PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
       topic, qos, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
 
@@ -201,7 +211,8 @@ namespace gradient_cost_plugin
       }
       else if (param_type == ParameterType::PARAMETER_BOOL)
       {
-        if (param_name == name_ + "." + "enabled" && enabled_ != parameter.as_bool())
+        if ((param_name == name_ + "." + "enabled")
+            && (enabled_ != parameter.as_bool()))
         {
           enabled_ = parameter.as_bool();
           if (enabled_)
@@ -209,17 +220,11 @@ namespace gradient_cost_plugin
             current_ = false;
           }
         }
-//         else if (param_name == name_ + "." + "footprint_clearing_enabled")
-//         {
-//           footprint_clearing_enabled_ = parameter.as_bool();
-//         }
       }
       else if (param_type == ParameterType::PARAMETER_INTEGER)
       {
-        // if (param_name == name_ + "." + "combination_method")
-        // {
-        //   combination_method_ = parameter.as_int();
-        // }
+        if (param_name == name_ + "." + "min_cost")
+          min_cost_ = parameter.as_int();
       }
     }
 
@@ -287,7 +292,6 @@ namespace gradient_cost_plugin
 
     // We have new data to process so we are not current any more.
     current_ = false;
-
   }
 
 
@@ -359,6 +363,12 @@ namespace gradient_cost_plugin
                                           = cloud_transf_.data.begin();
     std::vector<unsigned char>::const_iterator iter_cloud_end
                                           = cloud_transf_.data.end();
+    unsigned int costmapIdx;
+    grid_map::Index mapIdx;
+    unsigned int mx, my;
+    grid_map::Position mapPos;
+    int indX, indY;
+
     for (; iter_cloud != iter_cloud_end;
          ++iter_x, iter_cloud += cloud_transf_.point_step)
     {
@@ -388,6 +398,7 @@ namespace gradient_cost_plugin
           double current_elev = grid_map_.at("elevation", mapIdx);
           grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
                                                        current_elev);
+          grid_map_.at("cost", mapIdx) = NO_INFORMATION;
 
           // And update the bounding box
           BB_max_(0) = std::max(BB_max_(0), mapIdx(0));
@@ -401,25 +412,12 @@ namespace gradient_cost_plugin
     //
     // Create the costs in the gridmap and the costmap.
     //
-    grid_map::Index mapIdx, subMapIdx;
-    unsigned int mx, my;
-    grid_map::Position mapPos;
-    unsigned int costmapIdx;
-    int indX, indY;
     for (indX = BB_min_(0) + 1; indX <= BB_max_(0) - 1; indX++)
     {
       for (indY = BB_min_(1) + 1; indY <= BB_max_(1) - 1; indY++)
       {
         mapIdx(0) = indX;
         mapIdx(1) = indY;
-
-        // Remove locations that do not have data
-        float centreElev = grid_map_.at("elevation", mapIdx);
-        if (std::isnan(centreElev))
-        {
-          // No data here, we might as well ignore the point.
-          continue;
-        }
 
         // Remove locations that are outside of the local map.
         grid_map_.getPosition(mapIdx, mapPos);
@@ -431,12 +429,19 @@ namespace gradient_cost_plugin
             << ")");
           continue;
         }
-
-        float cost = FREE_SPACE;
-        // float cost = 100;
         costmapIdx = getIndex(mx, my);
-        costmap_[costmapIdx] = cost;
-        grid_map_.at("cost", mapIdx) = cost;
+
+        // Remove locations that do not have data for
+        float centreElev = grid_map_.at("elevation", mapIdx);
+        if (std::isnan(centreElev))
+        {
+          // No data here, we might as well ignore the point.
+          continue;
+        }
+
+        float cost = min_cost_;
+//         costmap_[costmapIdx] = cost;
+//         grid_map_.at("cost", mapIdx) = cost;
 
         // First a look at the 8 neighbours to check step size.
         if ((fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-1))
@@ -482,37 +487,42 @@ namespace gradient_cost_plugin
                    - grid_map_.at("elevation", grid_map::Index(indX+1,indY-1))))
            / devide;
 
-        // And the angle to horizontal, in deg.  The normal pointing up to the
-        // grid is N = (grad_x, grad_y, 1).  The vertical direction is
-        // V = (0, 0, 1).  The angle to the vertical is
-        // angle_v = acos((N.V)/sqrt(mag(N)*mag(V))), where '.' is the dot
-        // product.  Here N.V = 1 and mag(V) = 1.  he angle N to V is what we
-        // need to compare to min_angle_ and max_angle_.
-        float angle = acos(1.0
-                          / sqrt(grad_x * grad_x + grad_y * grad_y + 1));
-        // Angles in [pi/2, pi] need to be mirrored to fall in [0, pi/2] as
-        // they correspond to an upside down face which seems to happen on
-        // (near) horizontal faces
-        if (angle > M_PI_2)
+        if (!std::isnan(grad_x) && !std::isnan(grad_y))
         {
-          angle = M_PI - angle;
-        }
-        // We only care about the absolute value of the angle.
-        angle = fabs(angle);
-        if (angle <= min_angle_)
-          cost = 0;
-        else if (angle >= max_angle_)
-          cost = LETHAL_OBSTACLE;
-        else
-          cost = ((angle - min_angle_)
-                 * LETHAL_OBSTACLE / (max_angle_ - min_angle_));
+          // And the angle to horizontal, in deg.  The normal pointing up to the
+          // grid is N = (grad_x, grad_y, 1).  The vertical direction is
+          // V = (0, 0, 1).  The angle to the vertical is
+          // angle_v = acos((N.V)/sqrt(mag(N)*mag(V))), where '.' is the dot
+          // product.  Here N.V = 1 and mag(V) = 1.  he angle N to V is what we
+          // need to compare to min_angle_ and max_angle_.
+          float angle = acos(1.0
+                            / sqrt(grad_x * grad_x + grad_y * grad_y + 1));
+          // Angles in [pi/2, pi] need to be mirrored to fall in [0, pi/2] as
+          // they correspond to an upside down face which seems to happen on
+          // (near) horizontal faces
+          if (angle > M_PI_2)
+          {
+            angle = M_PI - angle;
+          }
+          // We only care about the absolute value of the angle.
+          angle = fabs(angle);
+          if (angle <= min_angle_)
+            cost = min_cost_;
+          else if (angle >= max_angle_)
+            cost = LETHAL_OBSTACLE;
+          else
+            cost = ((angle - min_angle_)
+                  * (MAX_NON_OBSTACLE - min_cost_)
+                  / (max_angle_ - min_angle_)) + min_cost_;
 
-        // Set the cost in the gris and costmap.
-        grid_map_.at("cost", mapIdx) = cost;
-        costmap_[costmapIdx] = cost;
-        touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
+          // Set the cost in the grid and costmap.
+          grid_map_.at("cost", mapIdx) = cost;
+          costmap_[costmapIdx] = cost;
+          touch(mapPos(0), mapPos(1), min_x, min_y, max_x, max_y);
+        }
       }
     }
+//     std::cout << std::endl;
 
     if (grid_map_pub_->get_subscription_count() > 0)
     {
@@ -555,7 +565,6 @@ namespace gradient_cost_plugin
     }
   }
 
-
   /*!
    * \brief Update the costs in the master costmap in the window
    * \param master_grid The master costmap grid to update
@@ -590,8 +599,7 @@ namespace gradient_cost_plugin
   }
 
 
-  void
-  GradientCostLayer::reset()
+  void GradientCostLayer::reset()
   {
     resetMaps();
     // resetBuffersLastUpdated();
