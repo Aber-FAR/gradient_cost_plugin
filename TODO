@@ -1,2 +1,4 @@
 - Clearing the footprint in the traditional way (setting it to free space) makes no sense here.  Instead we should set the cost to that calculated from the tilt and roll of the robot (from IMU).  This might be expensive and relies on another topic,
 so should probably be optional.
+
+- Maybe add a "mean" method to combine multiple elevations falling in the same GridMap cell.  This is however significantly more expensive in storage (needs an extra layer in the GridMap to store the number of points per cell) and processing (needs an extra loop to go over all elevations and calculate the mean in each cell.

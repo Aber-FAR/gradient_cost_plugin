@@ -74,6 +74,29 @@ namespace gradient_cost_plugin
                      rclcpp::ParameterValue(tmp_angle));
     declareParameter("min_cost",
                      rclcpp::ParameterValue(min_cost_));
+    std::string elev_comb;
+    switch (elev_comb_)
+    {
+      case first:
+        elev_comb = "first";
+        break;
+      case last:
+        elev_comb = "last";
+        break;
+      case min:
+        elev_comb = "min";
+        break;
+      case max:
+        elev_comb = "max";
+        break;
+      default:
+        RCLCPP_ERROR_STREAM(logger_,
+                            "Unknown elevation combination method: "
+                            << elev_comb_);
+        exit(EXIT_FAILURE);
+    }
+    declareParameter("elevation_combination",
+                     rclcpp::ParameterValue(elev_comb));
 
     auto node = node_.lock();
     if (!node)
@@ -92,6 +115,23 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "max_angle", tmp_angle);
     max_angle_ = static_cast<float>(tmp_angle) / 180.0 * M_PI;
     node->get_parameter(name_ + "." + "min_cost", min_cost_);
+    node->get_parameter(name_ + "." + "elevation_combination",
+                        elev_comb);
+    if (elev_comb == "first")
+      elev_comb_ = first;
+    else if (elev_comb == "last")
+      elev_comb_ = last;
+    else if (elev_comb == "min")
+      elev_comb_ = min;
+    else if (elev_comb == "max")
+      elev_comb_ = max;
+    else
+    {
+      RCLCPP_ERROR_STREAM(logger_,
+                          "Unknown elevation combination method: "
+                          << elev_comb);
+      exit(EXIT_FAILURE);
+    }
 
     if (rcutils_logging_set_logger_level("gradient_cost_layer",
                                          RCUTILS_LOG_SEVERITY_ERROR)
@@ -225,6 +265,27 @@ namespace gradient_cost_plugin
       {
         if (param_name == name_ + "." + "min_cost")
           min_cost_ = parameter.as_int();
+      }
+      else if (param_type == ParameterType::PARAMETER_STRING)
+      {
+        if (param_name == name_ + "." + "elevation_combination")
+        {
+          std::string elev_comb = parameter.as_string();
+          if (elev_comb == "first")
+            elev_comb_ = first;
+          else if (elev_comb == "last")
+            elev_comb_ = last;
+          else if (elev_comb == "min")
+            elev_comb_ = min;
+          else if (elev_comb == "max")
+            elev_comb_ = max;
+          else
+          {
+            RCLCPP_ERROR_STREAM(logger_,
+                                "Unknown elevation combination method: "
+                                << elev_comb);
+          }
+        }
       }
     }
 
@@ -396,8 +457,28 @@ namespace gradient_cost_plugin
         {
           // If a value already exist at this location, we keep the highest.
           double current_elev = grid_map_.at("elevation", mapIdx);
-          grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
-                                                       current_elev);
+          switch (elev_comb_)
+          {
+            case last:
+              grid_map_.at("elevation", mapIdx) = gm_point.point.z;
+              break;
+            case first:
+              if (!std::isnan(current_elev))
+                grid_map_.at("elevation", mapIdx) = gm_point.point.z;
+              break;
+            case min:
+              grid_map_.at("elevation", mapIdx) = std::min(gm_point.point.z,
+                                                           current_elev);
+              break;
+            case max:
+              grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
+                                                           current_elev);
+              break;
+            default:
+              RCLCPP_ERROR_STREAM(logger_,
+                                  "Unknown elevation combination method: "
+                                  << elev_comb_);
+          }
           grid_map_.at("cost", mapIdx) = NO_INFORMATION;
 
           // And update the bounding box

@@ -23,3 +23,4 @@ global_costmap:
         topic: /oak/points
         obstacle_max_range: 5.0
         obstacle_min_range: 0.2
+        elevation_combination: "last"

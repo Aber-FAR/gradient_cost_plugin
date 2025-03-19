@@ -143,9 +143,31 @@ protected:
                        double* min_x, double* min_y,
                        double* max_x, double* max_y);
 
-  std::string global_frame_;  ///< \brief The global frame for the costmap
+  /*!
+   * \brief Possible method of combining several elevation values in the GridMap.
+   */
+  enum elev_combination_methods
+  {
+    first = 0,
+    last,
+    min,
+    max
+  };
 
-  /// \brief Dynamic parameters handler
+  /*!
+   * \brief The ombination method for when more than one point cloud point fall
+   * in the same cell of the GridMap.
+   */
+  elev_combination_methods elev_comb_ = last;
+
+  /*!
+   * \brief The global frame for the costmap
+   */
+  std::string global_frame_;
+
+  /*!
+   * \brief Dynamic parameters handler
+   */
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr dyn_params_handler_;
 
   bool rolling_window_;
@@ -189,16 +211,6 @@ protected:
    */
   sensor_msgs::msg::PointCloud2 global_frame_cloud_;
 
-  /*
-   * \brief PCL pointcloud2 to convert from the ROS pointcloud2.
-   */
-//   pcl::PCLPointCloud2 pclCloud2_;
-
-  /*
-   * \brief PCL pointcloud pointer to convert from the pointcloud2 and manipulate later.
-   */
-//   pcl::PointCloud<pcl::PointXYZ>::Ptr pclCloudPtr_ = nullptr;
-
   /*!
    * \brief Buffer for the TFs received.
    */
@@ -213,11 +225,6 @@ protected:
    * \brief Time tolerance in the transform, in s.
    */
   tf2::Duration tf_tolerance_;
-
-  /*
-   * \brief GridMap PCL loader.
-   */
-//   std::shared_ptr<grid_map::GridMapPclLoader> gridMapPclLoader_ = nullptr;
 
   /*!
    * \brief Max range for looking at obstacles.

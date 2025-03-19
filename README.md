@@ -32,10 +32,18 @@ The slope is then turned into a cost by linearly mapping [`min_angle`, `max_angl
 | `obstacle_max_range` | Maximum range in the frame of the sensor to be considered in the pointcloud (also used to set the size of the GridMap). | 5.0 | No |
 | `obstacle_min_range` | Minimum range in the frame of the sensor to be considered in the pointcloud. | 0.0 | No |
 | `sensor_frame` | Name of the frame of the sensor, to overide or set a missing frame from the data. | empty string | No |
+| `elevation_combination` | Specifies how multiple pointcloud points are combined in one cell of the GridMap (see below). | "last" | Yes |
 
-The GridMap size is set by the parameter `obstacle_max_range`.  The resolution of the GridMap is that of the corresponding map (parameter `resolution` of the costmap).  The maximum allowed step size should obviously not only depend on the physical capabilities of the robot but also the distance between neighbouring cells, e.g. the resolution of the GridMap.
+The GridMap size is set by the parameter `obstacle_max_range`.  The resolution of the GridMap is that of the corresponding map (parameter `resolution` of the costmap).  The maximum allowed step size should obviously not only depend on the physical capabilities of the robot but also the distance between neighbouring cells, e.g. the resolution of the GridMap/costmap.
 
 The `costmap_2d` parameter `transform_tolerance` is also used.
+
+When multiple points from the pointcloud fall in the same cell, they can be combined in a numer of ways, specified by the parameter `elevation_combination`:
+
+- "first": uses the first elevation;
+- "last": uses the last elevation.  This is probably the cheapest method;
+- "min": uses the minimum elevation.  This is good if negative obstacles are expected, but amplifies the importance of noise;
+- "max": uses the maximum elevation.  This is good if positive obstacles are expected, but amplifies the importance of noise.
 
 ## yaml config file
 
@@ -68,4 +76,5 @@ global_costmap:
         topic: /oak/points
         obstacle_max_range: 5.0
         obstacle_min_range: 0.2
+        elevation_combination: "last"
 ```
