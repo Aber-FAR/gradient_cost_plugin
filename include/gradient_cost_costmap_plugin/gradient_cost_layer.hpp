@@ -151,8 +151,47 @@ protected:
     first = 0,
     last,
     min,
-    max
+    max,
+    average
   };
+
+  /*!
+   * \brief Convert a string to the equivalent elevation combination code.
+   *
+   * If the provided string is not valid, then the code is not changed.
+   *
+   * \param[in] name The string representing the method.
+   * \param[out] code The code (from elev_combination_methods).
+   * \param[in] do_exit If true, then we exit in case of a unknown string.
+   * \return true if the provided string was valid, false otherwise.
+   */
+  bool from_string(const std::string& name,
+                   elev_combination_methods* code,
+                   bool do_exit = false)
+  {
+    bool ok = true;
+    if (name == "first")
+      *code = first;
+    else if (name == "last")
+      *code = last;
+    else if (name == "min")
+      *code = min;
+    else if (name == "max")
+      *code = max;
+    else if (name == "average")
+      *code = average;
+    else
+    {
+      ok = false;
+      RCLCPP_ERROR_STREAM(logger_,
+                          "Unknown elevation combination method: "
+                          << name);
+      if (do_exit)
+        exit(EXIT_FAILURE);
+    }
+
+    return(ok);
+  }
 
   /*!
    * \brief The ombination method for when more than one point cloud point fall

@@ -117,21 +117,7 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "min_cost", min_cost_);
     node->get_parameter(name_ + "." + "elevation_combination",
                         elev_comb);
-    if (elev_comb == "first")
-      elev_comb_ = first;
-    else if (elev_comb == "last")
-      elev_comb_ = last;
-    else if (elev_comb == "min")
-      elev_comb_ = min;
-    else if (elev_comb == "max")
-      elev_comb_ = max;
-    else
-    {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Unknown elevation combination method: "
-                          << elev_comb);
-      exit(EXIT_FAILURE);
-    }
+    from_string(elev_comb, &elev_comb_, true);
 
     if (rcutils_logging_set_logger_level("gradient_cost_layer",
                                          RCUTILS_LOG_SEVERITY_ERROR)
@@ -215,6 +201,10 @@ namespace gradient_cost_plugin
     grid_map_.setFrameId(global_frame_);
     grid_map_.add("elevation");
     grid_map_.add("cost");
+    if (elev_comb_ == average)
+    {
+      grid_map_.add("counter");
+    }
   }
 
 
@@ -271,19 +261,19 @@ namespace gradient_cost_plugin
         if (param_name == name_ + "." + "elevation_combination")
         {
           std::string elev_comb = parameter.as_string();
-          if (elev_comb == "first")
-            elev_comb_ = first;
-          else if (elev_comb == "last")
-            elev_comb_ = last;
-          else if (elev_comb == "min")
-            elev_comb_ = min;
-          else if (elev_comb == "max")
-            elev_comb_ = max;
-          else
+          elev_combination_methods old_method = elev_comb_;
+          if (from_string(elev_comb, &elev_comb_, false))
           {
-            RCLCPP_ERROR_STREAM(logger_,
-                                "Unknown elevation combination method: "
-                                << elev_comb);
+            if ((elev_comb_ == average) && (elev_comb_ != old_method))
+            {
+              // We need to create the "counter" gridmap layer.
+              grid_map_.add("counter");
+            }
+            else if ((elev_comb_ != average) && (old_method == average))
+            {
+              // We need to remove the "counter" layer.
+              grid_map_.erase("counter");
+            }
           }
         }
       }
@@ -430,6 +420,12 @@ namespace gradient_cost_plugin
     grid_map::Position mapPos;
     int indX, indY;
 
+    if (elev_comb_ == average)
+    {
+      grid_map_["elevation"].setConstant(0.0);
+      grid_map_["counter"].setConstant(0.0);
+    }
+
     for (; iter_cloud != iter_cloud_end;
          ++iter_x, iter_cloud += cloud_transf_.point_step)
     {
@@ -463,7 +459,7 @@ namespace gradient_cost_plugin
               grid_map_.at("elevation", mapIdx) = gm_point.point.z;
               break;
             case first:
-              if (!std::isnan(current_elev))
+              if (std::isnan(current_elev))
                 grid_map_.at("elevation", mapIdx) = gm_point.point.z;
               break;
             case min:
@@ -473,6 +469,12 @@ namespace gradient_cost_plugin
             case max:
               grid_map_.at("elevation", mapIdx) = std::max(gm_point.point.z,
                                                            current_elev);
+              break;
+            case average:
+              grid_map_.at("elevation", mapIdx) = current_elev
+                                                  + gm_point.point.z;
+              grid_map_.at("counter", mapIdx) = grid_map_.at("counter", mapIdx)
+                                                + 1;
               break;
             default:
               RCLCPP_ERROR_STREAM(logger_,
@@ -488,6 +490,13 @@ namespace gradient_cost_plugin
           BB_min_(1) = std::min(BB_min_(1), mapIdx(1));
         }
       }
+    }
+
+    // Finalise the elevations if averaging them.
+    if (elev_comb_ == average)
+    {
+      grid_map_["elevation"] = grid_map_["elevation"].array()
+                               / grid_map_["counter"].array();
     }
 
     //

@@ -43,7 +43,8 @@ When multiple points from the pointcloud fall in the same cell, they can be comb
 - "first": uses the first elevation;
 - "last": uses the last elevation.  This is probably the cheapest method;
 - "min": uses the minimum elevation.  This is good if negative obstacles are expected, but amplifies the importance of noise;
-- "max": uses the maximum elevation.  This is good if positive obstacles are expected, but amplifies the importance of noise.
+- "max": uses the maximum elevation.  This is good if positive obstacles are expected, but amplifies the importance of noise;
+- "average": calculates the average of all elevation values falling in each cell.  This is good to remove noise, but is expensive.
 
 ## yaml config file
 
