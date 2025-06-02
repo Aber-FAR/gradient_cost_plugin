@@ -292,6 +292,9 @@ namespace gradient_cost_plugin
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
+    // We have new data to process so we are not current any more.
+    current_ = false;
+
     auto node = node_.lock();
 
     //
@@ -340,9 +343,6 @@ namespace gradient_cost_plugin
         cloud->header.frame_id.c_str(), ex.what());
       return;
     }
-
-    // We have new data to process so we are not current any more.
-    current_ = false;
   }
 
 
@@ -383,9 +383,6 @@ namespace gradient_cost_plugin
       return;
     }
     useExtraBounds(min_x, min_y, max_x, max_y);
-
-    // update the global current status
-    current_ = true;
 
     //
     // Initialise the grid map.
@@ -621,6 +618,9 @@ namespace gradient_cost_plugin
     }
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
+
+    // update the global current status
+    current_ = true;
   }
 
 
