@@ -23,7 +23,6 @@ The slope is then turned into a cost by linearly mapping [`min_angle`, `max_angl
 | Parameter | Description | Default values | Dynamic? |
 |-----------|-------------|----------------|----------|
 | `enabled` | Whether the plugin is enabled or not. | True | Yes |
-| `footprint_clearing_enabled` | If true, the robot footprint will clear (mark as free) the space in which it travels. | True | Yes |
 | `max_step` | Maximum step allowed (in m), above which a cell is marked as `LETHAL_OBSTACLE`. | 0.2 | Yes |
 | `max_angle` | Maximum angle from horizontal (in degrees) of the landscape above which the cell is marked as `LETHAL_OBSTACLE`. | 40 | Yes |
 | `min_angle` | Minimum angle from horizontal (in degrees) of the landscape, below which the cell is marked as `min_cost`. | 10 | Yes |
@@ -33,6 +32,7 @@ The slope is then turned into a cost by linearly mapping [`min_angle`, `max_angl
 | `obstacle_min_range` | Minimum range in the frame of the sensor to be considered in the pointcloud. | 0.0 | No |
 | `sensor_frame` | Name of the frame of the sensor, to overide or set a missing frame from the data. | empty string | No |
 | `elevation_combination` | Specifies how multiple pointcloud points are combined in one cell of the GridMap (see below). | "last" | Yes |
+| `no_data_timeout` | Timeout on data to consider the produced costmap current (in seconds).  A zero or negative value disables the check. | 0.0 | No |
 
 The GridMap size is set by the parameter `obstacle_max_range`.  The resolution of the GridMap is that of the corresponding map (parameter `resolution` of the costmap).  The maximum allowed step size should obviously not only depend on the physical capabilities of the robot but also the distance between neighbouring cells, e.g. the resolution of the GridMap/costmap.
 
@@ -78,4 +78,5 @@ global_costmap:
         obstacle_max_range: 5.0
         obstacle_min_range: 0.2
         elevation_combination: "last"
+        no_data_timeout: 0.5
 ```

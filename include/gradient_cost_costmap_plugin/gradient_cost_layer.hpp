@@ -318,6 +318,24 @@ protected:
    */
   std::string sensor_frame_;
 
+  /*!
+   * \brief Time of the last data.
+   */
+  rclcpp::Time last_data_time_;
+
+  /*!
+   * \brief Timeout on data (in seconds).
+   *
+   * If the data becomes older than this, the costmap is declared not current.
+   * A zero (default) or negative timeout disables this.
+   */
+  double no_data_timeout_ = 0;
+
+  /*!
+   * \brief Tells if the last arrived data (pointcloud) has been processed.
+   */
+  bool data_processed_ = false;
+
 };
 
 }  // namespace gradient_cost_plugin

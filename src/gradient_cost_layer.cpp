@@ -28,7 +28,6 @@
 #include <pluginlib/class_list_macros.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
-#include <nav2_costmap_2d/costmap_math.hpp>
 
 using nav2_costmap_2d::FREE_SPACE;
 using nav2_costmap_2d::LETHAL_OBSTACLE;
@@ -97,6 +96,8 @@ namespace gradient_cost_plugin
     }
     declareParameter("elevation_combination",
                      rclcpp::ParameterValue(elev_comb));
+    declareParameter("no_data_timeout",
+                     rclcpp::ParameterValue(no_data_timeout_));
 
     auto node = node_.lock();
     if (!node)
@@ -118,6 +119,7 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "elevation_combination",
                         elev_comb);
     from_string(elev_comb, &elev_comb_, true);
+    node->get_parameter(name_ + "." + "no_data_timeout", no_data_timeout_);
 
     if (rcutils_logging_set_logger_level("gradient_cost_layer",
                                          RCUTILS_LOG_SEVERITY_ERROR)
@@ -292,8 +294,7 @@ namespace gradient_cost_plugin
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
-    // We have new data to process so we are not current any more.
-    current_ = false;
+    data_processed_ = false;
 
     auto node = node_.lock();
 
@@ -367,7 +368,7 @@ namespace gradient_cost_plugin
 
     auto node = node_.lock();
 
-    if (current_)
+    if (data_processed_)
     {
       // There is nothing to do so we return.
       return;
@@ -619,8 +620,20 @@ namespace gradient_cost_plugin
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
 
-    // update the global current status
-    current_ = true;
+    data_processed_ = true;
+    if ((no_data_timeout_ > 0.0)
+        && ((clock_->now() - last_data_time_).seconds() > no_data_timeout_))
+    {
+      RCLCPP_WARN_STREAM(logger_,
+        "Pointcloud data too old ("
+        << (clock_->now() - last_data_time_).seconds() << "s for timeout of "
+        << no_data_timeout_ << "s)");
+      current_ = false;
+    }
+    else
+    {
+      current_ = true;
+    }
   }
 
 
