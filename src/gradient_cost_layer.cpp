@@ -344,6 +344,8 @@ namespace gradient_cost_plugin
         cloud->header.frame_id.c_str(), ex.what());
       return;
     }
+
+    last_data_time_ = clock_->now();
   }
 
 
@@ -364,7 +366,7 @@ namespace gradient_cost_plugin
                                        double* min_x, double* min_y,
                                        double* max_x, double* max_y)
   {
-    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());  
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
     auto node = node_.lock();
 
