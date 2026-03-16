@@ -18,9 +18,7 @@
   <depend>nav2_costmap_2d</depend>
   <depend>grid_map_ros</depend>
   <depend>grid_map_costmap_2d</depend>
-
-<!--   <depend>message_filters</depend> -->
-
+  
   <export>
     <costmap_2d plugin="${prefix}/gradient_cost_layer.xml" />
     <build_type>ament_cmake</build_type>
