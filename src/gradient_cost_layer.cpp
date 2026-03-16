@@ -294,9 +294,10 @@ namespace gradient_cost_plugin
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
-    data_processed_ = false;
-
     auto node = node_.lock();
+
+    data_processed_ = false;
+    data_received_ = true;
 
     //
     // We transform the pointcloud to the global frame.  This makes a copy of
@@ -370,7 +371,7 @@ namespace gradient_cost_plugin
 
     auto node = node_.lock();
 
-    if (data_processed_)
+    if (data_processed_ || !data_received_)
     {
       // There is nothing to do so we return.
       return;

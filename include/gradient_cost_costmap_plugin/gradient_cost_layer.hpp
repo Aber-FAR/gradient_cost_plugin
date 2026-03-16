@@ -336,6 +336,11 @@ protected:
    */
   bool data_processed_ = false;
 
+  /*!
+   * \brief Tells if we have received some data, in case we try to process it
+   * before then.
+   */
+  bool data_received_ = false;
 };
 
 }  // namespace gradient_cost_plugin
