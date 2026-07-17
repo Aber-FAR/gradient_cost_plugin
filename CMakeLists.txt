@@ -13,6 +13,9 @@ find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(grid_map_ros REQUIRED)
 find_package(grid_map_costmap_2d REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(image_geometry REQUIRED)
+find_package(depth_image_proc REQUIRED)
 
 set(dep_pkgs
     rclcpp
@@ -20,6 +23,9 @@ set(dep_pkgs
     nav2_costmap_2d
     grid_map_ros
     grid_map_costmap_2d
+    sensor_msgs
+    image_geometry
+    depth_image_proc
     )
 
 add_library(${lib_name} SHARED

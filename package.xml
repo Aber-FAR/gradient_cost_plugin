@@ -18,7 +18,10 @@
   <depend>nav2_costmap_2d</depend>
   <depend>grid_map_ros</depend>
   <depend>grid_map_costmap_2d</depend>
-  
+  <depend>sensor_msgs</depend>
+  <depend>image_geometry</depend>
+  <depend>depth_image_proc</depend>
+
   <export>
     <costmap_2d plugin="${prefix}/gradient_cost_layer.xml" />
     <build_type>ament_cmake</build_type>

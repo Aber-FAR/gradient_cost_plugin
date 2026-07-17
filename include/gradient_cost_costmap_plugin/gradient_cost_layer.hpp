@@ -40,6 +40,9 @@
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
+#include <image_geometry/pinhole_camera_model.hpp>
 #include <nav2_costmap_2d/costmap_layer.hpp>
 #include <nav2_costmap_2d/layered_costmap.hpp>
 #include <nav2_costmap_2d/observation_buffer.hpp>
@@ -124,6 +127,32 @@ public:
    */
   void pointCloud2Callback(sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
 
+  /*!
+   * \brief A callback handling depth images, when using "depth_image" as
+   * input_type.
+   *
+   * This only stores the received image and, exactly like
+   * pointCloud2Callback(), sets data_received_ to true and data_processed_
+   * to false to flag that new, as yet unprocessed, data has arrived.  It
+   * deliberately does not convert the image to a pointcloud itself:
+   * deprojecting a depth image is comparatively expensive, and the depth
+   * image may be published faster than the costmap actually consumes it, or
+   * while this layer is disabled.  The conversion is instead done lazily by
+   * convertPendingDepthImage(), called from updateBounds() using the same
+   * data_received_/data_processed_ guard as the rest of that function, so
+   * that it only ever happens (at most once per update cycle) when the
+   * result is actually going to be used.
+   * \param depth_msg The depth image.
+   */
+  void depthImageCallback(sensor_msgs::msg::Image::ConstSharedPtr depth_msg);
+
+  /*!
+   * \brief A callback to keep track of the CameraInfo matching the depth
+   * images, when using "depth_image" as input_type.
+   * \param info_msg The camera info.
+   */
+  void cameraInfoCallback(sensor_msgs::msg::CameraInfo::ConstSharedPtr info_msg);
+
 protected:
 
   std::vector<geometry_msgs::msg::Point> transformed_footprint_;
@@ -200,6 +229,28 @@ protected:
   elev_combination_methods elev_comb_ = last;
 
   /*!
+   * \brief Derive the default CameraInfo topic from a depth image topic,
+   * following the usual image_transport convention, e.g.
+   * "/camera/depth/image_raw" -> "/camera/depth/camera_info".
+   * \param[in] image_topic The depth image topic.
+   * \return The derived camera_info topic.
+   */
+  static std::string deriveCameraInfoTopic(const std::string& image_topic);
+
+  /*!
+   * \brief Convert latest_depth_msg_ into a PointCloud2 and feed it to
+   * pointCloud2Callback().
+   *
+   * Only called from updateBounds(), guarded there by the same
+   * data_received_/data_processed_ check used for the "pointcloud"
+   * input_type, so the (expensive) deprojection only happens when new depth
+   * data has arrived and a costmap update is actually about to consume it.
+   * Logs a throttled warning and does nothing if no CameraInfo has been
+   * received yet.
+   */
+  void convertPendingDepthImage();
+
+  /*!
    * \brief The global frame for the costmap
    */
   std::string global_frame_;
@@ -213,9 +264,75 @@ protected:
   bool was_reset_;
 
   /*!
-   * \brief Pointcloud2 subscriber.
+   * \brief Source of data used to populate the GridMap: either "pointcloud"
+   * (a sensor_msgs::msg::PointCloud2) or "depth_image" (a
+   * sensor_msgs::msg::Image plus its matching sensor_msgs::msg::CameraInfo).
+   */
+  std::string input_type_ = "pointcloud";
+
+  /*!
+   * \brief Pointcloud2 subscriber.  Only used when input_type is
+   * "pointcloud".
    */
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr PC2_sub_ = nullptr;
+
+  /*!
+   * \brief Depth image subscriber.  Only used when input_type is
+   * "depth_image".
+   */
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_ = nullptr;
+
+  /*!
+   * \brief Topic on which the CameraInfo matching the depth image is
+   * received.  Only used when input_type is "depth_image".
+   */
+  std::string camera_info_topic_;
+
+  /*!
+   * \brief CameraInfo subscriber.  Only used when input_type is
+   * "depth_image".
+   */
+  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_
+                                                                = nullptr;
+
+  /*!
+   * \brief Latest CameraInfo received, used to project the depth image into
+   * a pointcloud.  Only used when input_type is "depth_image".
+   */
+  sensor_msgs::msg::CameraInfo::ConstSharedPtr latest_camera_info_ = nullptr;
+
+  /*!
+   * \brief Latest depth image received.  Only used when input_type is
+   * "depth_image".
+   *
+   * Whether it still needs converting to a pointcloud is tracked by
+   * data_received_/data_processed_ (set directly in depthImageCallback()),
+   * exactly as for the "pointcloud" input_type; there is no separate
+   * bookkeeping for the depth image path.
+   */
+  sensor_msgs::msg::Image::ConstSharedPtr latest_depth_msg_ = nullptr;
+
+  /*!
+   * \brief Pinhole camera model built from latest_camera_info_.  Only used
+   * when input_type is "depth_image".
+   */
+  image_geometry::PinholeCameraModel camera_model_;
+
+  /*!
+   * \brief Whether the depth image's own frame (depth_msg->header.frame_id,
+   * overridden by sensor_frame_ if set) is a proper camera "_optical_frame"
+   * (X right, Y down, Z forward into the scene), as used by
+   * depth_image_proc::convertDepth() and by real camera drivers.
+   *
+   * Some sources (notably Gazebo's simulated depth camera) instead tag the
+   * depth image with the sensor's REP103 body frame (X forward, Y left, Z
+   * up) and bake the optical-to-body axis remap into their own point
+   * generation.  Set this to false in that case so
+   * convertPendingDepthImage() applies the same remap; otherwise the
+   * resulting pointcloud ends up rotated relative to that frame.  Only used
+   * when input_type is "depth_image".
+   */
+  bool depth_frame_is_optical_ = true;
 
   /*!
    * \brief Received point cloud transformed to the global_frame.

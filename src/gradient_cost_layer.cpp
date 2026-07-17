@@ -27,7 +27,9 @@
 
 #include <pluginlib/class_list_macros.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <sensor_msgs/image_encodings.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
+#include <depth_image_proc/conversions.hpp>
 
 using nav2_costmap_2d::FREE_SPACE;
 using nav2_costmap_2d::LETHAL_OBSTACLE;
@@ -157,12 +159,27 @@ namespace gradient_cost_plugin
                      rclcpp::ParameterValue(obstacle_max_range_));
     declareParameter("obstacle_min_range",
                      rclcpp::ParameterValue(obstacle_min_range_));
+    declareParameter("input_type", rclcpp::ParameterValue(input_type_));
+    declareParameter("camera_info_topic", rclcpp::ParameterValue(std::string("")));
+    declareParameter("depth_frame_is_optical",
+                     rclcpp::ParameterValue(depth_frame_is_optical_));
 
     node->get_parameter(name_ + "." + "topic", topic);
     node->get_parameter(name_ + "." + "sensor_frame", sensor_frame_);
 
     node->get_parameter(name_ + "." + "obstacle_max_range", obstacle_max_range_);
     node->get_parameter(name_ + "." + "obstacle_min_range", obstacle_min_range_);
+    node->get_parameter(name_ + "." + "input_type", input_type_);
+    node->get_parameter(name_ + "." + "camera_info_topic", camera_info_topic_);
+    node->get_parameter(name_ + "." + "depth_frame_is_optical", depth_frame_is_optical_);
+
+    if ((input_type_ != "pointcloud") && (input_type_ != "depth_image"))
+    {
+      RCLCPP_ERROR_STREAM(logger_,
+                          "Unknown input_type: " << input_type_
+                          << ", falling back to \"pointcloud\"");
+      input_type_ = "pointcloud";
+    }
 
     // A QoS object with a sensor profile, only keeping the last message.
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_sensor_data);
@@ -176,8 +193,26 @@ namespace gradient_cost_plugin
     tf2_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf2_buffer_);
 
-    PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-      topic, qos, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
+    if (input_type_ == "depth_image")
+    {
+      if (camera_info_topic_.empty())
+      {
+        camera_info_topic_ = deriveCameraInfoTopic(topic);
+      }
+      RCLCPP_INFO_STREAM(logger_,
+        "Depth image input: subscribing to depth image on \"" << topic
+        << "\" and CameraInfo on \"" << camera_info_topic_ << "\"");
+      camera_info_sub_ = node->create_subscription<sensor_msgs::msg::CameraInfo>(
+        camera_info_topic_, qos,
+        std::bind(&GradientCostLayer::cameraInfoCallback, this, _1));
+      depth_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
+        topic, qos, std::bind(&GradientCostLayer::depthImageCallback, this, _1));
+    }
+    else
+    {
+      PC2_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+        topic, qos, std::bind(&GradientCostLayer::pointCloud2Callback, this, _1));
+    }
 
     //
     // Initialise the grid map.
@@ -302,15 +337,27 @@ namespace gradient_cost_plugin
     //
     // We transform the pointcloud to the global frame.  This makes a copy of
     // the pointcloud.
-    std::string origin_frame = (sensor_frame_ == "" ?
+    std::string origin_frame = (sensor_frame_.empty() ?
       cloud->header.frame_id : sensor_frame_);
 
-    cloud_transf_.header.stamp = cloud->header.stamp;
-    cloud_transf_.header.frame_id = origin_frame;
     try
     {
-      tf2_buffer_->transform(*cloud, cloud_transf_,
-                             global_frame_, tf_tolerance_);
+      if (sensor_frame_.empty())
+      {
+        tf2_buffer_->transform(*cloud, cloud_transf_,
+                               global_frame_, tf_tolerance_);
+      }
+      else
+      {
+        // tf2's transform() determines the *source* frame from the input
+        // message's own header.frame_id, not from anything we set on
+        // cloud_transf_ (the output), so overriding the frame requires
+        // patching a copy of the input before transforming it.
+        sensor_msgs::msg::PointCloud2 cloud_with_frame = *cloud;
+        cloud_with_frame.header.frame_id = sensor_frame_;
+        tf2_buffer_->transform(cloud_with_frame, cloud_transf_,
+                               global_frame_, tf_tolerance_);
+      }
     }
     catch (tf2::TransformException & ex)
     {
@@ -326,7 +373,7 @@ namespace gradient_cost_plugin
     // We save the origin of the sensor, in the global frame.
     geometry_msgs::msg::PointStamped orig_point;
     orig_point.header.stamp = cloud->header.stamp;
-    orig_point.header.frame_id = cloud->header.frame_id;
+    orig_point.header.frame_id = origin_frame;
     orig_point.point.x = 0;
     orig_point.point.y = 0;
     orig_point.point.z = 0;
@@ -347,6 +394,153 @@ namespace gradient_cost_plugin
     }
 
     last_data_time_ = clock_->now();
+  }
+
+  /*!
+   * \brief Derive the default CameraInfo topic from a depth image topic,
+   * following the usual image_transport convention, e.g.
+   * "/camera/depth/image_raw" -> "/camera/depth/camera_info".
+   * \param[in] image_topic The depth image topic.
+   * \return The derived camera_info topic.
+   */
+  std::string GradientCostLayer::deriveCameraInfoTopic(
+                    const std::string& image_topic)
+  {
+    auto pos = image_topic.find_last_of('/');
+    if (pos == std::string::npos)
+    {
+      return "camera_info";
+    }
+    return image_topic.substr(0, pos + 1) + "camera_info";
+  }
+
+  /*!
+   * \brief A callback to keep track of the CameraInfo matching the depth
+   * images, when using "depth_image" as input_type.
+   * \param info_msg The camera info.
+   */
+  void GradientCostLayer::cameraInfoCallback(
+                    sensor_msgs::msg::CameraInfo::ConstSharedPtr info_msg)
+  {
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
+    latest_camera_info_ = info_msg;
+  }
+
+  /*!
+   * \brief A callback handling depth images, when using "depth_image" as
+   * input_type.
+   *
+   * Mirrors pointCloud2Callback(): stashes the message and sets
+   * data_received_/data_processed_ to flag that new, unprocessed data has
+   * arrived.  See convertPendingDepthImage() for why the actual conversion
+   * is not done here.
+   * \param depth_msg The depth image.
+   */
+  void GradientCostLayer::depthImageCallback(
+                    sensor_msgs::msg::Image::ConstSharedPtr depth_msg)
+  {
+    std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
+    latest_depth_msg_ = depth_msg;
+    data_processed_ = false;
+    data_received_ = true;
+  }
+
+  /*!
+   * \brief Convert latest_depth_msg_ into a PointCloud2 and feed it to
+   * pointCloud2Callback().
+   *
+   * Only called from updateBounds(), guarded there by the same
+   * data_received_/data_processed_ check used for the "pointcloud"
+   * input_type, so the (expensive) deprojection only happens when new depth
+   * data has arrived and a costmap update is actually about to consume it.
+   * Logs a throttled warning and does nothing if no CameraInfo has been
+   * received yet.
+   */
+  void GradientCostLayer::convertPendingDepthImage()
+  {
+    sensor_msgs::msg::Image::ConstSharedPtr depth_msg = latest_depth_msg_;
+
+    if (!latest_camera_info_)
+    {
+      RCLCPP_WARN_STREAM_THROTTLE(logger_, *clock_, 5000,
+        "Waiting for CameraInfo on topic " << camera_info_topic_
+        << " before processing depth images");
+      return;
+    }
+
+    if ((latest_camera_info_->width != depth_msg->width)
+        || (latest_camera_info_->height != depth_msg->height))
+    {
+      RCLCPP_ERROR_STREAM_THROTTLE(logger_, *clock_, 5000,
+        "CameraInfo on " << camera_info_topic_ << " is "
+        << latest_camera_info_->width << "x" << latest_camera_info_->height
+        << " but the depth image on " << depth_msg->header.frame_id
+        << " is " << depth_msg->width << "x" << depth_msg->height
+        << ": cx/cy/fx/fy do not match this image, so the resulting "
+        << "pointcloud will be wrong.  Check that camera_info_topic points "
+        << "at the CameraInfo matching this depth image.");
+      return;
+    }
+
+    camera_model_.fromCameraInfo(latest_camera_info_);
+
+    auto cloud_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
+    cloud_msg->header = depth_msg->header;
+    cloud_msg->height = depth_msg->height;
+    cloud_msg->width = depth_msg->width;
+    cloud_msg->is_dense = false;
+    cloud_msg->is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier pcd_modifier(*cloud_msg);
+    pcd_modifier.setPointCloud2FieldsByString(1, "xyz");
+
+    if (depth_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1)
+    {
+      depth_image_proc::convertDepth<uint16_t>(depth_msg, cloud_msg, camera_model_);
+    }
+    else if (depth_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1)
+    {
+      depth_image_proc::convertDepth<float>(depth_msg, cloud_msg, camera_model_);
+    }
+    else
+    {
+      RCLCPP_ERROR_STREAM_THROTTLE(logger_, *clock_, 5000,
+        "Unsupported depth image encoding: " << depth_msg->encoding
+        << " (expected " << sensor_msgs::image_encodings::TYPE_16UC1
+        << " or " << sensor_msgs::image_encodings::TYPE_32FC1 << ")");
+      return;
+    }
+
+    if (!depth_frame_is_optical_)
+    {
+      // convertDepth() above always produces points in the camera-optical
+      // convention (X right, Y down, Z forward into the scene).  If the
+      // frame this cloud is tagged with (depth_msg->header.frame_id,
+      // overridden by sensor_frame_ if set) is not actually an optical
+      // frame -- e.g. Gazebo's simulated depth camera tags it with the
+      // sensor's plain REP103 body frame (X forward, Y left, Z up) -- we
+      // need to apply the same fixed optical-to-body axis remap that a real
+      // camera's static TF (base_link -> ... -> ..._optical_frame) would
+      // otherwise take care of, or the cloud ends up rotated relative to
+      // its own declared frame.
+      sensor_msgs::PointCloud2Iterator<float> iter_x(*cloud_msg, "x");
+      sensor_msgs::PointCloud2Iterator<float> iter_y(*cloud_msg, "y");
+      sensor_msgs::PointCloud2Iterator<float> iter_z(*cloud_msg, "z");
+      for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z)
+      {
+        float optical_x = *iter_x;
+        float optical_y = *iter_y;
+        float optical_z = *iter_z;
+        *iter_x = optical_z;
+        *iter_y = -optical_x;
+        *iter_z = -optical_y;
+      }
+    }
+
+    // pointCloud2Callback() re-sets data_received_/data_processed_ (already
+    // done above) and, more importantly, does the actual tf transform into
+    // cloud_transf_/orig_transf_point_ that updateBounds() needs.
+    pointCloud2Callback(cloud_msg);
   }
 
 
@@ -370,6 +564,21 @@ namespace gradient_cost_plugin
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
     auto node = node_.lock();
+
+    // If using a depth image, only now (about to actually use the data) do
+    // we pay for deprojecting it into a pointcloud: this may well be a lot
+    // less often than the depth images themselves arrive, and never at all
+    // while this layer is disabled.  This reuses the very same
+    // data_received_/data_processed_ flags checked just below (both are set
+    // directly in depthImageCallback(), exactly like pointCloud2Callback()
+    // does for the "pointcloud" input_type), so the conversion is skipped
+    // both when no (new) depth image was received and when it has already
+    // been processed.
+    if ((input_type_ == "depth_image") && enabled_
+        && !data_processed_ && data_received_)
+    {
+      convertPendingDepthImage();
+    }
 
     if (data_processed_ || !data_received_)
     {
