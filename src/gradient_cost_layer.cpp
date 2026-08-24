@@ -201,12 +201,16 @@ namespace gradient_cost_plugin
       }
       RCLCPP_INFO_STREAM(logger_,
         "Depth image input: subscribing to depth image on \"" << topic
-        << "\" and CameraInfo on \"" << camera_info_topic_ << "\"");
+        << "\" and CameraInfo on \"" << camera_info_topic_
+        << "\"; publishing the deprojected (pre-TF) debug pointcloud on "
+        << "\"/pointcloud_debug\"");
       camera_info_sub_ = node->create_subscription<sensor_msgs::msg::CameraInfo>(
         camera_info_topic_, qos,
         std::bind(&GradientCostLayer::cameraInfoCallback, this, _1));
       depth_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
         topic, qos, std::bind(&GradientCostLayer::depthImageCallback, this, _1));
+      pointcloud_debug_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "/pointcloud_debug", qos);
     }
     else
     {
@@ -535,6 +539,14 @@ namespace gradient_cost_plugin
         *iter_y = -optical_x;
         *iter_z = -optical_y;
       }
+    }
+
+    if (pointcloud_debug_pub_->get_subscription_count() > 0)
+    {
+      // Published in the depth image's own frame, i.e. before the
+      // transform to global_frame_ done by pointCloud2Callback() below, so
+      // that the deprojection itself can be checked independently of TF.
+      pointcloud_debug_pub_->publish(*cloud_msg);
     }
 
     // pointCloud2Callback() re-sets data_received_/data_processed_ (already

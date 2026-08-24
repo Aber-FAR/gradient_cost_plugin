@@ -405,6 +405,16 @@ protected:
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_ = nullptr;
 
   /*!
+   * \brief Debug publisher for the pointcloud deprojected from the depth
+   * image, in the depth image's own frame (i.e. before the transform to
+   * global_frame_).  Only created/used when input_type is "depth_image".
+   * Published on "/pointcloud_debug" purely to help visualise/debug the
+   * depth image to pointcloud conversion, e.g. in rviz.
+   */
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+    pointcloud_debug_pub_ = nullptr;
+
+  /*!
    * \brief Minimun cost to use.
    *
    * For some planners, having a cost (rather than 0) helps.
