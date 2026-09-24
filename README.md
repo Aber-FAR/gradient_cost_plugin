@@ -51,6 +51,13 @@ When multiple points from the pointcloud fall in the same cell, they can be comb
 - "max": uses the maximum elevation.  This is good if positive obstacles are expected, but amplifies the importance of noise;
 - "average": calculates the average of all elevation values falling in each cell.  This is good to remove noise, but is expensive.
 
+## Published topics
+
+| Topic | Type | Description |
+|-------|------|--------------|
+| `<node_name>/grid_map_from_pointcloud` | `grid_map_msgs/msg/GridMap` | The internal GridMap (elevation and cost layers), in `global_frame`.  Only published while something is subscribed to it. |
+| `<node_name>/pointcloud_gradient_cost` | `sensor_msgs/msg/PointCloud2` | The pointcloud generated from the depth image, in the depth image's own frame (i.e. before the transform to `global_frame`).  Only published while something is subscribed to it, and only when `input_type` is `"depth_image"`. |
+
 ## yaml config file
 
 Below is an example of the yaml entry for the plugin, here as part of the global map.

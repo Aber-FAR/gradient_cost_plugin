@@ -207,6 +207,8 @@ namespace gradient_cost_plugin
         std::bind(&GradientCostLayer::cameraInfoCallback, this, _1));
       depth_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
         topic, qos, std::bind(&GradientCostLayer::depthImageCallback, this, _1));
+      pointcloud_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+        nodeName + "/pointcloud_gradient_cost", qos);
     }
     else
     {
@@ -535,6 +537,13 @@ namespace gradient_cost_plugin
         *iter_y = -optical_x;
         *iter_z = -optical_y;
       }
+    }
+
+    if (pointcloud_pub_->get_subscription_count() > 0)
+    {
+      // Published in the depth image's own frame, i.e. before the
+      // transform to global_frame_ done by pointCloud2Callback() below.
+      pointcloud_pub_->publish(*cloud_msg);
     }
 
     // pointCloud2Callback() re-sets data_received_/data_processed_ (already

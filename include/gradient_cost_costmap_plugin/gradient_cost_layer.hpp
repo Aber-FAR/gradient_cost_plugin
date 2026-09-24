@@ -405,6 +405,15 @@ protected:
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_ = nullptr;
 
   /*!
+   * \brief Publisher for the pointcloud generated from the depth image, in
+   * the depth image's own frame (i.e. before the transform to
+   * global_frame_).  Only created/used when input_type is "depth_image".
+   * Published on "<node_name>/pointcloud_gradient_cost".
+   */
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+    pointcloud_pub_ = nullptr;
+
+  /*!
    * \brief Minimun cost to use.
    *
    * For some planners, having a cost (rather than 0) helps.
