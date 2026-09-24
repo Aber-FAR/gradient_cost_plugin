@@ -115,3 +115,5 @@ In Gazebo simulation, the simulated depth camera typically tags the depth image 
         topic: /camera/depth/image_raw
         depth_frame_is_optical: false
 ```
+
+To debug the depth image to pointcloud conversion (e.g. if the resulting cloud looks wrong), the deprojected cloud -- in the depth image's own frame, before the transform to `global_frame` -- is published on `/pointcloud_debug` whenever something is subscribed to it; view it in rviz alongside the depth image's own frame axes to check the deprojection independently of any TF issue.

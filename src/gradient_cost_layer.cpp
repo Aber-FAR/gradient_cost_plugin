@@ -201,7 +201,9 @@ namespace gradient_cost_plugin
       }
       RCLCPP_INFO_STREAM(logger_,
         "Depth image input: subscribing to depth image on \"" << topic
-        << "\" and CameraInfo on \"" << camera_info_topic_ << "\"");
+        << "\" and CameraInfo on \"" << camera_info_topic_
+        << "\"; publishing the deprojected (pre-TF) debug pointcloud on "
+        << "\"/pointcloud_debug\"");
       camera_info_sub_ = node->create_subscription<sensor_msgs::msg::CameraInfo>(
         camera_info_topic_, qos,
         std::bind(&GradientCostLayer::cameraInfoCallback, this, _1));
