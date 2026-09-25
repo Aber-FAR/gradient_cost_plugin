@@ -31,6 +31,7 @@ The slope is then turned into a cost by linearly mapping [`min_angle`, `max_angl
 | `topic` | Topic name where to get the pointclouds (or depth images) from. | empty string | No |
 | `camera_info_topic` | Topic name for the `CameraInfo` matching the depth image.  Only used when `input_type` is `"depth_image"`.  If left empty, it is derived from `topic` by replacing its last path component with `camera_info` (the usual `image_transport` convention), e.g. `/camera/depth/image_raw` -> `/camera/depth/camera_info`. | empty string | No |
 | `depth_frame_is_optical` | Whether the depth image's frame is a proper camera `_optical_frame` (X right, Y down, Z forward), as used by real camera drivers.  Set to `false` if it is instead tagged with a plain REP103 body/link frame (X forward, Y left, Z up) that already expects the optical-to-body axis remap applied in software -- this is the case for Gazebo's simulated depth camera, for example.  Getting this wrong produces a pointcloud that looks rotated relative to its own declared frame.  Only used when `input_type` is `"depth_image"`. | True | No |
+| `depth_image_stride` | Only deproject every `depth_image_stride`-th row and column of the depth image (1 = every pixel).  Increasing this trades point density for update speed (roughly stride² fewer points).  Must be >= 1; invalid values are rejected with a warning and treated as 1.  Only used when `input_type` is `"depth_image"`. | 1 | No |
 | `obstacle_max_range` | Maximum range in the frame of the sensor to be considered in the pointcloud (also used to set the size of the GridMap). | 5.0 | No |
 | `obstacle_min_range` | Minimum range in the frame of the sensor to be considered in the pointcloud. | 0.0 | No |
 | `sensor_frame` | Name of the frame of the sensor, to overide or set a missing frame from the data. | empty string | No |
@@ -114,6 +115,14 @@ In Gazebo simulation, the simulated depth camera typically tags the depth image 
         input_type: "depth_image"
         topic: /camera/depth/image_raw
         depth_frame_is_optical: false
+```
+
+If updates are taking too long -- e.g. a costmap embedded in a `controller_server` that shares its mutex with the control loop, causing it to miss its desired frequency -- `depth_image_stride` cuts down the number of pixels deprojected per update (a costmap resolution of a few cm rarely needs per-pixel depth data anyway):
+
+```
+        input_type: "depth_image"
+        topic: /camera/depth/image_raw
+        depth_image_stride: 3
 ```
 
 To debug the depth image to pointcloud conversion (e.g. if the resulting cloud looks wrong), the deprojected cloud -- in the depth image's own frame, before the transform to `global_frame` -- is published on `/pointcloud_debug` whenever something is subscribed to it; view it in rviz alongside the depth image's own frame axes to check the deprojection independently of any TF issue.

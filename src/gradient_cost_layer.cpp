@@ -1,7 +1,7 @@
 /*
  * gradient_cost_costmap_plugin
  *
- * Copyright 2025 Aberystwyth University
+ * Copyright 2025-2026 Aberystwyth University
  *
  * This library and program are free software: you can redistribute them
  * and/or modify them under the terms of the GNU General Public License as
@@ -19,7 +19,16 @@
 
 #include "gradient_cost_costmap_plugin/gradient_cost_layer.hpp"
 
+// Logs, on every real update, how long updateBounds() spent in each of its
+// costly phases (depth-image deprojection + TF transform, per-point grid
+// insertion, gradient pass) - see the comment by DISPLAY_TIMING's use in
+// updateBounds() for why that matters. Comment this out to silence it.
+//#define DISPLAY_TIMING
+
 #include <algorithm>
+#ifdef DISPLAY_TIMING
+#  include <chrono>
+#endif
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,6 +48,74 @@ using nav2_costmap_2d::MAX_NON_OBSTACLE;
 using rcl_interfaces::msg::ParameterType;
 
 using std::placeholders::_1;
+
+namespace
+{
+  /*!
+   * \brief Deproject a depth image into a PointCloud2, like
+   * depth_image_proc::convertDepth(), but only visiting every
+   * `stride`-th row and column.
+   * \param[in] depth_msg The source depth image.
+   * \param[in,out] cloud_msg The destination cloud, already sized to the
+   * strided dimensions; filled in here.
+   * \param[in] model The camera model used to deproject each pixel.
+   * \param[in] stride Only every stride-th row/column of depth_msg is used.
+   */
+  template<typename T>
+  void convertDepthStrided(
+    const sensor_msgs::msg::Image::ConstSharedPtr & depth_msg,
+    const sensor_msgs::msg::PointCloud2::SharedPtr & cloud_msg,
+    const image_geometry::PinholeCameraModel & model,
+    unsigned int stride)
+  {
+    float center_x = model.cx();
+    float center_y = model.cy();
+    double unit_scaling = depth_image_proc::DepthTraits<T>::toMeters(T(1));
+    float constant_x = unit_scaling / model.fx();
+    float constant_y = unit_scaling / model.fy();
+    float bad_point = std::numeric_limits<float>::quiet_NaN();
+
+    sensor_msgs::PointCloud2Iterator<float> iter_x(*cloud_msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(*cloud_msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(*cloud_msg, "z");
+
+    const T * depth_row = reinterpret_cast<const T *>(&depth_msg->data[0]);
+    uint32_t row_step = depth_msg->step / sizeof(T);
+
+    for (uint32_t v = 0; v < depth_msg->height;
+         v += stride, depth_row += static_cast<ptrdiff_t>(row_step) * stride)
+    {
+      for (uint32_t u = 0; u < depth_msg->width;
+           u += stride, ++iter_x, ++iter_y, ++iter_z)
+      {
+        T depth = depth_row[u];
+
+        // Missing points denoted by NaNs.
+        if (!depth_image_proc::DepthTraits<T>::valid(depth))
+        {
+          *iter_x = *iter_y = *iter_z = bad_point;
+          continue;
+        }
+
+        *iter_x = (u - center_x) * depth * constant_x;
+        *iter_y = (v - center_y) * depth * constant_y;
+        *iter_z = depth_image_proc::DepthTraits<T>::toMeters(depth);
+      }
+    }
+  }
+
+  /*!
+   * \brief Number of samples taken along one image dimension when walking
+   * it in steps of `stride`, starting at 0 - i.e. ceil(size / stride).
+   * \param[in] size The size (in pixels) of the dimension being strided.
+   * \param[in] stride The step size.
+   * \return The resulting number of samples.
+   */
+  uint32_t strideDim(uint32_t size, uint32_t stride)
+  {
+    return (size + stride - 1) / stride;
+  }
+}  // namespace
 
 namespace gradient_cost_plugin
 {
@@ -60,7 +137,6 @@ namespace gradient_cost_plugin
     double transform_tolerance;
 
     declareParameter("enabled", rclcpp::ParameterValue(true));
-//     declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(true));
     declareParameter("min_obstacle_height", rclcpp::ParameterValue(0.0));
     declareParameter("max_obstacle_height", rclcpp::ParameterValue(2.0));
     declareParameter("observation_sources",
@@ -108,8 +184,6 @@ namespace gradient_cost_plugin
     }
 
     node->get_parameter(name_ + "." + "enabled", enabled_);
-//     node->get_parameter(name_ + "." + "footprint_clearing_enabled",
-//                         footprint_clearing_enabled_);
     node->get_parameter("transform_tolerance", transform_tolerance);
     tf_tolerance_ = tf2::durationFromSec(transform_tolerance);
     node->get_parameter(name_ + "." + "max_step", max_step_);
@@ -163,6 +237,8 @@ namespace gradient_cost_plugin
     declareParameter("camera_info_topic", rclcpp::ParameterValue(std::string("")));
     declareParameter("depth_frame_is_optical",
                      rclcpp::ParameterValue(depth_frame_is_optical_));
+    declareParameter("depth_image_stride",
+                     rclcpp::ParameterValue(static_cast<int>(depthImageStride_)));
 
     node->get_parameter(name_ + "." + "topic", topic);
     node->get_parameter(name_ + "." + "sensor_frame", sensor_frame_);
@@ -172,6 +248,18 @@ namespace gradient_cost_plugin
     node->get_parameter(name_ + "." + "input_type", input_type_);
     node->get_parameter(name_ + "." + "camera_info_topic", camera_info_topic_);
     node->get_parameter(name_ + "." + "depth_frame_is_optical", depth_frame_is_optical_);
+    {
+      int stride = static_cast<int>(depthImageStride_);
+      node->get_parameter(name_ + "." + "depth_image_stride", stride);
+      if (stride < 1)
+      {
+        RCLCPP_WARN_STREAM(logger_,
+          "depth_image_stride must be >= 1, got " << stride
+          << "; using 1 (no decimation)");
+        stride = 1;
+      }
+      depthImageStride_ = static_cast<unsigned int>(stride);
+    }
 
     if ((input_type_ != "pointcloud") && (input_type_ != "depth_image"))
     {
@@ -490,8 +578,12 @@ namespace gradient_cost_plugin
 
     auto cloud_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     cloud_msg->header = depth_msg->header;
-    cloud_msg->height = depth_msg->height;
-    cloud_msg->width = depth_msg->width;
+    // When depthImageStride_ > 1, only every depthImageStride_-th row and
+    // column of the depth image is deprojected below - see
+    // convertDepthStrided()'s doc comment for why - so the destination
+    // cloud is correspondingly smaller than the source image.
+    cloud_msg->height = strideDim(depth_msg->height, depthImageStride_);
+    cloud_msg->width = strideDim(depth_msg->width, depthImageStride_);
     cloud_msg->is_dense = false;
     cloud_msg->is_bigendian = false;
 
@@ -500,11 +592,11 @@ namespace gradient_cost_plugin
 
     if (depth_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1)
     {
-      depth_image_proc::convertDepth<uint16_t>(depth_msg, cloud_msg, camera_model_);
+      convertDepthStrided<uint16_t>(depth_msg, cloud_msg, camera_model_, depthImageStride_);
     }
     else if (depth_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1)
     {
-      depth_image_proc::convertDepth<float>(depth_msg, cloud_msg, camera_model_);
+      convertDepthStrided<float>(depth_msg, cloud_msg, camera_model_, depthImageStride_);
     }
     else
     {
@@ -574,6 +666,15 @@ namespace gradient_cost_plugin
   {
     std::lock_guard<Costmap2D::mutex_t> guard(*getMutex());
 
+#ifdef DISPLAY_TIMING
+    // This mutex is the same one the controller's control loop locks to
+    // read costs during collision checking, so how long this whole function
+    // takes to run - not how often it runs - is what can stall that loop.
+    // Logged unconditionally (not throttled) so individual slow calls can
+    // be correlated against missed control-loop cycles in the logs.
+    const auto diag_update_start = std::chrono::steady_clock::now();
+#endif
+
     auto node = node_.lock();
 
     // If using a depth image, only now (about to actually use the data) do
@@ -590,6 +691,9 @@ namespace gradient_cost_plugin
     {
       convertPendingDepthImage();
     }
+#ifdef DISPLAY_TIMING
+    const auto diag_after_convert = std::chrono::steady_clock::now();
+#endif
 
     if (data_processed_ || !data_received_)
     {
@@ -720,6 +824,10 @@ namespace gradient_cost_plugin
                                / grid_map_["counter"].array();
     }
 
+#ifdef DISPLAY_TIMING
+    const auto diag_after_insert = std::chrono::steady_clock::now();
+#endif
+
     //
     // Create the costs in the gridmap and the costmap.
     //
@@ -842,6 +950,30 @@ namespace gradient_cost_plugin
     }
 
     updateFootprint(robot_x, robot_y, robot_yaw, min_x, min_y, max_x, max_y);
+
+#ifdef DISPLAY_TIMING
+    // See the comment by diag_update_start's declaration above.
+    {
+      using std::chrono::duration_cast;
+      using std::chrono::milliseconds;
+      const auto diag_now = std::chrono::steady_clock::now();
+      const auto convert_ms = duration_cast<milliseconds>(
+        diag_after_convert - diag_update_start).count();
+      const auto insert_ms = duration_cast<milliseconds>(
+        diag_after_insert - diag_after_convert).count();
+      const auto gradient_ms = duration_cast<milliseconds>(
+        diag_now - diag_after_insert).count();
+      const auto total_ms = duration_cast<milliseconds>(
+        diag_now - diag_update_start).count();
+      RCLCPP_INFO_STREAM(logger_,
+        "GradientCostLayer[" << name_ << "] updateBounds: "
+        << total_ms << "ms total (deproject+transform "
+        << convert_ms << "ms, point insertion " << insert_ms
+        << "ms, gradient pass " << gradient_ms << "ms) over "
+        << ((BB_max_(0) - BB_min_(0) + 1) * (BB_max_(1) - BB_min_(1) + 1))
+        << " cells, held while locking the shared costmap mutex");
+    }
+#endif
 
     data_processed_ = true;
     if ((no_data_timeout_ > 0.0)

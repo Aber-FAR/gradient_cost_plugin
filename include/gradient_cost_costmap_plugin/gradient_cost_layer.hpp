@@ -335,6 +335,15 @@ protected:
   bool depth_frame_is_optical_ = true;
 
   /*!
+   * \brief When using "depth_image" as input_type, only every
+   * depthImageStride_-th row and column of the depth image is deprojected
+   * into a point (see convertDepthStrided() in the .cpp), trading point
+   * density for update speed.  1 (default) processes every pixel, matching
+   * the pre-stride behaviour.
+   */
+  unsigned int depthImageStride_ = 1;
+
+  /*!
    * \brief Received point cloud transformed to the global_frame.
    */
   sensor_msgs::msg::PointCloud2 cloud_transf_;
