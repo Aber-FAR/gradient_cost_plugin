@@ -454,7 +454,7 @@ namespace gradient_cost_plugin
     catch (tf2::TransformException & ex)
     {
       // if an exception occurs, we need to remove the empty observation from the list
-      RCLCPP_ERROR(
+      RCLCPP_WARN(
         logger_,
         "TF Exception that should never happen for sensor frame: %s, cloud frame: %s, %s",
         origin_frame.c_str(),
