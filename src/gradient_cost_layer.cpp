@@ -805,8 +805,9 @@ namespace gradient_cost_plugin
               RCLCPP_ERROR_STREAM(logger_,
                                   "Unknown elevation combination method: "
                                   << elev_comb_);
+
+            grid_map_.at("cost", mapIdx) = NO_INFORMATION;
           }
-          grid_map_.at("cost", mapIdx) = NO_INFORMATION;
 
           // And update the bounding box
           BB_max_(0) = std::max(BB_max_(0), mapIdx(0));
@@ -863,6 +864,7 @@ namespace gradient_cost_plugin
 //         grid_map_.at("cost", mapIdx) = cost;
 
         // First a look at the 8 neighbours to check step size.
+	// Note that is any of the neighbours is NaN then the test will be false.
         if ((fabs(grid_map_.at("elevation", grid_map::Index(indX-1,indY-1))
                   - centreElev) > max_step_)
             || (fabs(grid_map_.at("elevation", grid_map::Index(indX-0,indY-1))
